@@ -27,7 +27,6 @@ if not loadFunc then
 end
 
 local Rayfield = loadFunc()
--- ===================================================================
 
 local Window = Rayfield:CreateWindow({Name = 'the "debug" button they call it', LoadingTitle = 'ready for the chaos?'})
 
@@ -210,6 +209,20 @@ local selectedSuit = suitList[1] or ''
 local autoWorkEnabled = false
 local autoWorkDelay = 5
 local bestWorkMode = true
+
+-- NEW: Anomaly gift system
+local giftList = {}
+local selectedGift = ''
+local autoGiftEnabled = false
+local autoGiftDelay = 10
+
+-- NEW: Speed & Damage auto-apply
+local autoSpeedDamageEnabled = false
+local hitboxSize = 10
+local dmgMax = 1500
+local dmgMin = 1500
+local attackSpeedValue = 5
+local infiniteAttackSpeed = false
 
 -- ==========================================
 -- TAB: ABNO WORKING
@@ -395,8 +408,9 @@ Tab:CreateButton({
 	end,
 })
 
--- Auto work loop
+-- Auto work loop - FIX: Thêm delay trước khi gọi lần đầu
 task.spawn(function()
+	task.wait(autoWorkDelay) -- Chờ trước khi bắt đầu
 	while true do
 		task.wait(autoWorkDelay)
 		if autoWorkEnabled and #selectedAbnos > 0 and abnoFolder then
@@ -484,6 +498,137 @@ CardTab:CreateButton({
 	end,
 })
 
+-- NEW: ANOMALY GIFT SYSTEM
+CardTab:CreateSection('Anomaly Gift')
+
+-- Refresh gift list
+local function refreshGiftList()
+	giftList = {}
+	pcall(function()
+		local giftFolder = getFolder(RepStorage, 'Assets', 'Gifts')
+		if giftFolder then
+			giftList = listChildren(giftFolder)
+		end
+	end)
+end
+
+refreshGiftList()
+
+CardTab:CreateDropdown({
+	Name = 'Select Gift',
+	Options = giftList,
+	CurrentOption = {selectedGift},
+	MultipleOptions = false,
+	Callback = function(opt)
+		selectedGift = opt[1] or ''
+	end,
+})
+
+CardTab:CreateButton({
+	Name = 'Add Gift to Abnormality',
+	Callback = function()
+		pcall(function()
+			if selectedGift == '' then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Vui lòng chọn một Gift.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
+			if #selectedAbnos == 0 then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Vui lòng chọn ít nhất 1 Abnormality.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
+			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'AddGiftEvent')
+			if not remote then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Không tìm thấy AddGiftEvent.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
+			local successCount = 0
+			for _, abnoName in ipairs(selectedAbnos) do
+				local sel = normalizeSelected(abnoName)
+				local abno = nil
+				pcall(function()
+					abno = abnoFolder:FindFirstChild(sel)
+				end)
+				if abno then
+					pcall(function()
+						remote:FireServer(abno, selectedGift)
+						successCount = successCount + 1
+					end)
+				end
+			end
+			
+			Rayfield:Notify({
+				Title = "Thành công!",
+				Content = "Đã thêm Gift cho " .. successCount .. " Abnormalities.",
+				Duration = 2,
+				Image = 4483362458,
+			})
+		end)
+	end,
+})
+
+CardTab:CreateToggle({
+	Name = 'Auto Add Gift',
+	CurrentValue = false,
+	Callback = function(Value)
+		autoGiftEnabled = Value
+	end,
+})
+
+CardTab:CreateInput({
+	Name = 'Auto Gift Delay (Giây)',
+	PlaceholderText = '10',
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		local v = tonumber(text)
+		if v and v > 0 then autoGiftDelay = v end
+	end,
+})
+
+-- Auto gift loop
+task.spawn(function()
+	task.wait(autoGiftDelay)
+	while true do
+		task.wait(autoGiftDelay)
+		if autoGiftEnabled and selectedGift ~= '' and #selectedAbnos > 0 and abnoFolder then
+			pcall(function()
+				local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'AddGiftEvent')
+				if not remote then return end
+				
+				for _, abnoName in ipairs(selectedAbnos) do
+					local sel = normalizeSelected(abnoName)
+					local abno = nil
+					pcall(function()
+						abno = abnoFolder:FindFirstChild(sel)
+					end)
+					if abno then
+						pcall(function()
+							remote:FireServer(abno, selectedGift)
+						end)
+					end
+				end
+			end)
+		end
+	end
+end)
+
 -- ==========================================
 -- TAB: SUIT SYSTEM
 -- ==========================================
@@ -552,7 +697,6 @@ SuitTab:CreateButton({
 					Image = 4483362458,
 				})
 			else
-				-- Try alternative method
 				local char = LocalPlayer.Character
 				if char then
 					local humanoid = nil
@@ -627,12 +771,10 @@ EndGameTab:CreateButton({
 					Image = 4483362458,
 				})
 			else
-				-- Try alternative - teleport to escape point
 				local char = LocalPlayer.Character
 				if char then
 					local hrp = char:FindFirstChild("HumanoidRootPart")
 					if hrp then
-						-- Common escape spawn points
 						hrp.CFrame = CFrame.new(0, 100, 0)
 						Rayfield:Notify({
 							Title = "Thực hiện",
@@ -680,13 +822,11 @@ EndGameTab:CreateButton({
 			if char then
 				local hrp = char:FindFirstChild("HumanoidRootPart")
 				if hrp then
-					-- Try to find escape area or use default position
 					local escapeArea = workspace:FindFirstChild("EscapeArea") or workspace:FindFirstChild("Exit")
 					
 					if escapeArea then
 						hrp.CFrame = escapeArea:GetBoundingBox().p
 					else
-						-- Default escape position (should be adjusted based on game)
 						hrp.CFrame = CFrame.new(0, 50, 0)
 					end
 					
@@ -743,7 +883,6 @@ EndGameTab:CreateButton({
 local WeaponTab = Window:CreateTab('weapon mod')
 WeaponTab:CreateSection('Hitbox Settings')
 
-local hitboxSize = 10
 WeaponTab:CreateInput({
 	Name = 'Hitbox Size',
 	PlaceholderText = '10',
@@ -790,6 +929,38 @@ local function applyHitboxToAllWeapons()
 	end)
 end
 
+-- FIX: Thêm hàm applyAllDamageToWeapons
+local function applyAllDamageToWeapons()
+	pcall(function()
+		local character = LocalPlayer.Character
+		if character then
+			for _, child in ipairs(character:GetChildren()) do
+				if child:IsA("Tool") then
+					pcall(function()
+						local damage = child:FindFirstChild("Damage")
+						if damage and damage:IsA("IntValue") then
+							damage.Value = math.random(dmgMin, dmgMax)
+						end
+					end)
+				end
+			end
+		end
+		local backpack = LocalPlayer:FindFirstChild("Backpack")
+		if backpack then
+			for _, child in ipairs(backpack:GetChildren()) do
+				if child:IsA("Tool") then
+					pcall(function()
+						local damage = child:FindFirstChild("Damage")
+						if damage and damage:IsA("IntValue") then
+							damage.Value = math.random(dmgMin, dmgMax)
+						end
+					end)
+				end
+			end
+		end
+	end)
+end
+
 WeaponTab:CreateButton({
 	Name = 'Apply Hitbox Size',
 	Callback = function()
@@ -804,8 +975,6 @@ WeaponTab:CreateButton({
 })
 
 WeaponTab:CreateSection('Damage Settings')
-local dmgMax = 1500
-local dmgMin = 1500
 
 WeaponTab:CreateInput({
 	Name = 'Max Damage',
@@ -827,6 +996,14 @@ WeaponTab:CreateInput({
 	end,
 })
 
+WeaponTab:CreateToggle({
+	Name = 'Auto Apply Damage',
+	CurrentValue = false,
+	Callback = function(Value)
+		autoSpeedDamageEnabled = Value
+	end,
+})
+
 WeaponTab:CreateButton({
 	Name = 'Apply Damage',
 	Callback = function()
@@ -841,8 +1018,6 @@ WeaponTab:CreateButton({
 })
 
 WeaponTab:CreateSection('Attack Speed')
-local attackSpeedValue = 5
-local infiniteAttackSpeed = false
 
 WeaponTab:CreateInput({
 	Name = 'Attack Speed',
@@ -896,6 +1071,25 @@ WeaponTab:CreateButton({
 		})
 	end,
 })
+
+-- FIX: Auto-apply speed and damage loop
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if autoSpeedDamageEnabled then
+			pcall(function()
+				-- Auto apply damage
+				applyAllDamageToWeapons()
+				-- Auto apply attack speed
+				if infiniteAttackSpeed then
+					setAttackSpeedValue(math.huge)
+				else
+					setAttackSpeedValue(attackSpeedValue)
+				end
+			end)
+		end
+	end
+end)
 
 WeaponTab:CreateSection('Utilities')
 WeaponTab:CreateButton({
@@ -998,178 +1192,26 @@ WeaponTab:CreateButton({
 						end)
 					end 
 				end
-				scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
 			end
 			
-			task.spawn(function()
-				while screenGui.Parent and task.wait(3) do updateList() end 
-			end)
 			updateList()
+			task.spawn(function()
+				while true do
+					task.wait(2)
+					if screenGui.Parent then
+						updateList()
+					else
+						break
+					end
+				end
+			end)
 			
 			Rayfield:Notify({
 				Title = "Thành công!",
-				Content = "Unit Tracker đã được tải.",
+				Content = "Đã tải Unit Tracker.",
 				Duration = 2,
 				Image = 4483362458,
 			})
 		end)
 	end,
 })
-
--- ==========================================
--- TAB: GET ITEMS (TÍNH NĂNG INVENTORY)
--- ==========================================
-local ItemTab = Window:CreateTab('Get Items')
-ItemTab:CreateSection('Spawner Vũ Khí & Đồ Dùng')
-
-ItemTab:CreateParagraph({
-	Title = "Lưu ý về Bảo mật (FE)", 
-	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn."
-})
-
-ItemTab:CreateButton({
-	Name = 'Lấy tất cả Vũ khí / E.G.O vào Balo',
-	Callback = function()
-		pcall(function()
-			local bp = LocalPlayer:FindFirstChild("Backpack")
-			if not bp then return end
-			
-			local count = 0
-			local seen = {}
-			
-			for _, t in ipairs(bp:GetChildren()) do
-				if t:IsA("Tool") then seen[t.Name] = true end
-			end
-			if LocalPlayer.Character then
-				for _, t in ipairs(LocalPlayer.Character:GetChildren()) do
-					if t:IsA("Tool") then seen[t.Name] = true end
-				end
-			end
-			
-			for _, obj in ipairs(RepStorage:GetDescendants()) do
-				if obj:IsA("Tool") and not seen[obj.Name] then
-					local clone = obj:Clone()
-					if clone then
-						clone.Parent = bp
-						seen[obj.Name] = true
-						count = count + 1
-					end
-				end
-			end
-			
-			for _, obj in ipairs(workspace:GetDescendants()) do
-				if obj:IsA("Tool") and not seen[obj.Name] and (obj.Parent and not obj.Parent:FindFirstChild("Humanoid")) then
-					local clone = obj:Clone()
-					if clone then
-						clone.Parent = bp
-						seen[obj.Name] = true
-						count = count + 1
-					end
-				end
-			end
-			
-			Rayfield:Notify({
-				Title = "Thành công!",
-				Content = "Đã tìm và đưa " .. tostring(count) .. " vật phẩm vào Inventory!",
-				Duration = 5,
-				Image = 4483362458,
-			})
-		end)
-	end,
-})
-
-ItemTab:CreateButton({
-    Name = 'Dọn dẹp Balo (Xóa toàn bộ Tool)',
-    Callback = function()
-        pcall(function()
-			local bp = LocalPlayer:FindFirstChild("Backpack")
-			if bp then bp:ClearAllChildren() end
-			
-			if LocalPlayer.Character then
-				for _, child in ipairs(LocalPlayer.Character:GetChildren()) do
-					if child:IsA("Tool") then
-						child:Destroy()
-					end
-				end
-			end
-			
-			Rayfield:Notify({
-				Title = "Đã dọn dẹp",
-				Content = "Đã xóa sạch đồ trong balo.",
-				Duration = 3,
-				Image = 4483362458,
-			})
-		end)
-    end,
-})
-
--- ==========================================
--- AUTO APPLY SYSTEMS 
--- ==========================================
-local function applyDamageToTool(tool)
-	pcall(function()
-		if tool:IsA('Tool') then
-			local settings = tool:FindFirstChild('SettingValues')
-			if settings then
-				local maxVal = settings:FindFirstChild('MaxDamageValue')
-				local minVal = settings:FindFirstChild('MinDamageValue')
-				if maxVal then pcall(function() maxVal.Value = dmgMax end) end
-				if minVal then pcall(function() minVal.Value = dmgMin end) end
-			end
-		end
-	end)
-end
-
-local function applyAllDamageToWeapons()
-	pcall(function()
-		local bp = LocalPlayer:FindFirstChild('Backpack')
-		if bp then
-			for _, tool in ipairs(bp:GetChildren()) do applyDamageToTool(tool) end
-		end
-		local char = LocalPlayer.Character
-		if char then
-			for _, tool in ipairs(char:GetChildren()) do applyDamageToTool(tool) end
-		end
-	end)
-end
-
-local function setupCharacter(character)
-	pcall(function()
-		task.wait(1)
-		if infiniteAttackSpeed then
-			setAttackSpeedValue(math.huge)
-		else
-			setAttackSpeedValue(attackSpeedValue)
-		end
-		applyAllDamageToWeapons()
-		
-		character.ChildAdded:Connect(function(child)
-			if child:IsA("Tool") then
-				applyHitboxToWeapon(child)
-				applyDamageToTool(child)
-			end
-		end)
-	end)
-end
-
-LocalPlayer.CharacterAdded:Connect(setupCharacter)
-
-if LocalPlayer.Character then
-	setupCharacter(LocalPlayer.Character)
-end
-
-local backpack = LocalPlayer:WaitForChild("Backpack", 5)
-if backpack then
-	backpack.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") then
-			applyHitboxToWeapon(child)
-			applyDamageToTool(child)
-		end
-	end)
-end
-
-task.spawn(function()
-	while task.wait(1) do
-		applyAllDamageToWeapons()
-	end
-end)
