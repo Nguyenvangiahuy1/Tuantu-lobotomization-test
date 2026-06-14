@@ -42,7 +42,7 @@ local function titleCase(s)
 	return string.upper(string.sub(s, 1, 1)) .. string.lower(string.sub(s, 2))
 end
 
--- Wait for folders to load to prevent empty lists on quick execution
+-- Đợi load map và dữ liệu
 local abnoFolder = workspace:WaitForChild('Abnormalities', 5)
 local assetsFolder = RepStorage:WaitForChild('Assets', 5)
 local talentsFolder = assetsFolder and assetsFolder:WaitForChild('Talents', 5)
@@ -95,10 +95,10 @@ Tab:CreateButton({
 Tab:CreateDropdown({
 	Name = 'Work Type',
 	Options = { 'Instinct', 'Insight', 'Attachment', 'Repression' },
-	CurrentOption = {selectedWork}, -- Fixed: Rayfield expects a table here
+	CurrentOption = {selectedWork},
 	MultipleOptions = false,
 	Callback = function(opt)
-		selectedWork = opt[1] -- Fixed: Rayfield returns a table
+		selectedWork = opt[1]
 	end,
 })
 
@@ -131,7 +131,7 @@ CardTab:CreateSection('Talent')
 CardTab:CreateDropdown({
 	Name = 'Talent',
 	Options = talentList,
-	CurrentOption = {selectedTalentRaw}, -- Fixed: Rayfield expects a table
+	CurrentOption = {selectedTalentRaw},
 	MultipleOptions = false,
 	Callback = function(opt)
 		selectedTalentRaw = opt[1]
@@ -280,8 +280,6 @@ WeaponTab:CreateButton({
 })
 
 WeaponTab:CreateSection('Utilities')
-
--- Unminified and cleaned up Unit Tracker code
 WeaponTab:CreateButton({
 	Name = "Load Unit Tracker",
 	Callback = function()
@@ -303,9 +301,8 @@ WeaponTab:CreateButton({
 			frame.BorderSizePixel = 0
 			frame.Parent = screenGui
 			
-			-- Dragging Logic
+			-- Logic di chuyển UI
 			local dragging, dragStart, startPos = false, nil, nil
-			
 			frame.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 then 
 					dragging = true
@@ -351,7 +348,6 @@ WeaponTab:CreateButton({
 				for _, obj in ipairs(scroll:GetChildren()) do 
 					if obj:IsA("TextButton") then obj:Destroy() end 
 				end
-				
 				local unitsFolder = workspace:FindFirstChild("Units")
 				if not unitsFolder then return end
 				
@@ -359,6 +355,217 @@ WeaponTab:CreateButton({
 					if unit:IsA("Model") and unit.Name ~= "Clerk" then 
 						local btn = Instance.new("TextButton")
 						btn.Size = UDim2.new(1, -10, 0, 25)
+						btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+						btn.Text = unit.Name
+						btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+						btn.TextSize = 14
+						btn.Font = Enum.Font.SourceSans
+						btn.Parent = scroll
+						
+						btn.MouseButton1Click:Connect(function()
+							local char = LocalPlayer.Character
+							local hrp = char and char:FindFirstChild("HumanoidRootPart")
+							if hrp and unit and unit.PrimaryPart then 
+								local pivot = unit:GetPivot().Position
+								local rayParams = RaycastParams.new()
+								rayParams.FilterDescendantsInstances = {unit}
+								rayParams.FilterType = Enum.RaycastFilterType.Exclude
+								local result = workspace:Raycast(pivot, Vector3.new(0, -50, 0), rayParams)
+								local targetPos = result and result.Position or pivot
+								hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+							end 
+						end)
+					end 
+				end
+				scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
+			end
+			
+			task.spawn(function()
+				while screenGui.Parent and task.wait(3) do updateList() end 
+			end)
+			updateList()
+			
+			local resizeHandle = Instance.new("Frame")
+			resizeHandle.Size = UDim2.new(0, 16, 0, 16)
+			resizeHandle.AnchorPoint = Vector2.new(1, 1)
+			resizeHandle.Position = UDim2.new(1, 0, 1, 0)
+			resizeHandle.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+			resizeHandle.BorderSizePixel = 0
+			resizeHandle.Active = true
+			resizeHandle.Parent = frame
+			
+			local resizing = false
+			resizeHandle.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = true end 
+			end)
+			resizeHandle.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = false end 
+			end)
+			
+			UserInputService.InputChanged:Connect(function(input)
+				if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then 
+					local newSizeX = math.clamp(input.Position.X - frame.AbsolutePosition.X, 200, 800)
+					local newSizeY = math.clamp(input.Position.Y - frame.AbsolutePosition.Y, 150, 600)
+					frame.Size = UDim2.new(0, newSizeX, 0, newSizeY)
+				end 
+			end)
+		end)
+	end,
+})
+
+-- ==========================================
+-- TAB: GET ITEMS (TÍNH NĂNG MỚI - INVENTORY)
+-- ==========================================
+local ItemTab = Window:CreateTab('Get Items')
+ItemTab:CreateSection('Spawner Vũ Khí & Đồ Dùng')
+
+ItemTab:CreateParagraph({
+	Title = "Lưu ý về Bảo mật (FE)", 
+	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn. Vì Roblox sử dụng FilteringEnabled (FE), một số đồ có thể hoạt động hoàn hảo, nhưng một số đồ bảo mật cao chỉ là ảo (không gây sát thương thực tế lên người chơi khác). Hãy test thử nhé!"
+})
+
+ItemTab:CreateButton({
+	Name = 'Lấy tất cả Vũ khí / E.G.O vào Balo',
+	Callback = function()
+		pcall(function()
+			local bp = LocalPlayer:FindFirstChild("Backpack")
+			if not bp then return end
+			
+			local count = 0
+			local seen = {}
+			
+			-- Đánh dấu các item đã có để không bị lấy trùng
+			for _, t in ipairs(bp:GetChildren()) do
+				if t:IsA("Tool") then seen[t.Name] = true end
+			end
+			if LocalPlayer.Character then
+				for _, t in ipairs(LocalPlayer.Character:GetChildren()) do
+					if t:IsA("Tool") then seen[t.Name] = true end
+				end
+			end
+			
+			-- Tìm trong ReplicatedStorage (Nơi cất đồ chính của game)
+			for _, obj in ipairs(RepStorage:GetDescendants()) do
+				if obj:IsA("Tool") and not seen[obj.Name] then
+					local clone = obj:Clone()
+					if clone then
+						clone.Parent = bp
+						seen[obj.Name] = true
+						count = count + 1
+					end
+				end
+			end
+			
+			-- Tìm những vũ khí bị đánh rơi ngoài Workspace
+			for _, obj in ipairs(workspace:GetDescendants()) do
+				if obj:IsA("Tool") and not seen[obj.Name] and (obj.Parent and not obj.Parent:FindFirstChild("Humanoid")) then
+					local clone = obj:Clone()
+					if clone then
+						clone.Parent = bp
+						seen[obj.Name] = true
+						count = count + 1
+					end
+				end
+			end
+			
+			Rayfield:Notify({
+				Title = "Thành công!",
+				Content = "Đã tìm và đưa " .. tostring(count) .. " vật phẩm vào Inventory của bạn!",
+				Duration = 5,
+				Image = 4483362458,
+			})
+		end)
+	end,
+})
+
+ItemTab:CreateButton({
+    Name = 'Dọn dẹp Balo (Xóa toàn bộ Tool)',
+    Callback = function()
+        pcall(function()
+			local bp = LocalPlayer:FindFirstChild("Backpack")
+			if bp then bp:ClearAllChildren() end
+			
+			if LocalPlayer.Character then
+				for _, child in ipairs(LocalPlayer.Character:GetChildren()) do
+					if child:IsA("Tool") then
+						child:Destroy()
+					end
+				end
+			end
+			
+			Rayfield:Notify({
+				Title = "Đã dọn dẹp",
+				Content = "Đã xóa sạch đồ trong balo để tránh giật lag.",
+				Duration = 3,
+				Image = 4483362458,
+			})
+		end)
+    end,
+})
+
+-- ==========================================
+-- AUTO APPLY SYSTEMS (Tự động kích hoạt khi cầm vũ khí)
+-- ==========================================
+local function applyDamageToTool(tool)
+	if tool:IsA('Tool') then
+		local settings = tool:FindFirstChild('SettingValues')
+		if settings then
+			local maxVal = settings:FindFirstChild('MaxDamageValue')
+			local minVal = settings:FindFirstChild('MinDamageValue')
+			if maxVal then pcall(function() maxVal.Value = dmgMax end) end
+			if minVal then pcall(function() minVal.Value = dmgMin end) end
+		end
+	end
+end
+
+local function applyAllDamageToWeapons()
+	local bp = LocalPlayer:FindFirstChild('Backpack')
+	if bp then
+		for _, tool in ipairs(bp:GetChildren()) do applyDamageToTool(tool) end
+	end
+	local char = LocalPlayer.Character
+	if char then
+		for _, tool in ipairs(char:GetChildren()) do applyDamageToTool(tool) end
+	end
+end
+
+local function setupCharacter(character)
+	task.wait(1)
+	if infiniteAttackSpeed then
+		setAttackSpeedValue(math.huge)
+	else
+		setAttackSpeedValue(attackSpeedValue)
+	end
+	applyAllDamageToWeapons()
+	
+	character.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			applyHitboxToWeapon(child)
+			applyDamageToTool(child)
+		end
+	end)
+end
+
+-- Connect để áp dụng stats mỗi khi nhân vật hồi sinh hoặc cầm tool
+LocalPlayer.CharacterAdded:Connect(setupCharacter)
+
+if LocalPlayer.Character then
+	setupCharacter(LocalPlayer.Character)
+end
+
+LocalPlayer:WaitForChild("Backpack").ChildAdded:Connect(function(child)
+	if child:IsA("Tool") then
+		applyHitboxToWeapon(child)
+		applyDamageToTool(child)
+	end
+end)
+
+task.spawn(function()
+	while task.wait(1) do
+		applyAllDamageToWeapons()
+	end
+end)
+btn.Size = UDim2.new(1, -10, 0, 25)
 						btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 						btn.Text = unit.Name
 						btn.TextColor3 = Color3.fromRGB(255, 255, 255)
