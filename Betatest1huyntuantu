@@ -98,6 +98,89 @@ local function safeWaitForChild(parent, name, timeout)
 	return result
 end
 
+-- Get best work type based on abnormality stats
+local function getBestWorkType(abnoFolder, abnoNames)
+	local workStats = {
+		Instinct = 0,
+		Insight = 0,
+		Attachment = 0,
+		Repression = 0
+	}
+	local validCount = 0
+	
+	for _, abnoName in ipairs(abnoNames) do
+		local sel = normalizeSelected(abnoName)
+		local abno = nil
+		pcall(function()
+			abno = abnoFolder:FindFirstChild(sel)
+		end)
+		
+		if abno then
+			-- Check HP to determine strength
+			local hp = nil
+			pcall(function()
+				hp = abno:FindFirstChild('HP')
+			end)
+			
+			local hpValue = 0
+			if hp and hp:IsA('IntValue') then
+				hpValue = hp.Value
+				validCount = validCount + 1
+			end
+			
+			-- Analyze work preferences
+			local workTablet = nil
+			pcall(function()
+				workTablet = abno:FindFirstChild('WorkTablet')
+			end)
+			
+			if workTablet then
+				-- Get resistance/affinity data if available
+				local instinctAffinity = 0
+				local insightAffinity = 0
+				local attachmentAffinity = 0
+				local repressionAffinity = 0
+				
+				pcall(function()
+					instinctAffinity = tonumber(workTablet:GetAttribute("InstinctAffinity") or 0) or 0
+					insightAffinity = tonumber(workTablet:GetAttribute("InsightAffinity") or 0) or 0
+					attachmentAffinity = tonumber(workTablet:GetAttribute("AttachmentAffinity") or 0) or 0
+					repressionAffinity = tonumber(workTablet:GetAttribute("RepressionAffinity") or 0) or 0
+				end)
+				
+				-- Combine HP and affinity to determine best work
+				if hpValue > 600 then
+					-- Strong enemy - use Repression or Attachment
+					if repressionAffinity > attachmentAffinity then
+						workStats.Repression = workStats.Repression + 1
+					else
+						workStats.Attachment = workStats.Attachment + 1
+					end
+				elseif hpValue > 300 then
+					-- Medium enemy - use Insight
+					workStats.Insight = workStats.Insight + 1
+				else
+					-- Weak enemy - use Instinct
+					workStats.Instinct = workStats.Instinct + 1
+				end
+			end
+		end
+	end
+	
+	-- Find best work type
+	local bestWork = 'Instinct'
+	local maxScore = workStats.Instinct
+	
+	for workType, score in pairs(workStats) do
+		if score > maxScore then
+			maxScore = score
+			bestWork = workType
+		end
+	end
+	
+	return bestWork
+end
+
 -- Đợi load map và dữ liệu
 local abnoFolder = safeWaitForChild(workspace, 'Abnormalities', 5)
 local assetsFolder = safeWaitForChild(RepStorage, 'Assets', 5)
@@ -168,7 +251,7 @@ Tab:CreateToggle({
 		if Value then
 			Rayfield:Notify({
 				Title = "Smart Mode Bật",
-				Content = "Sẽ tự động chọn cách làm việc tối ưu nhất.",
+				Content = "Sẽ tự động phân tích và chọn work type tối ưu nhất.",
 				Duration = 3,
 				Image = 4483362458,
 			})
@@ -230,7 +313,7 @@ Tab:CreateButton({
 })
 
 Tab:CreateDropdown({
-	Name = 'Work Type',
+	Name = 'Work Type (Manual)',
 	Options = { 'Instinct', 'Insight', 'Attachment', 'Repression' },
 	CurrentOption = {selectedWork},
 	MultipleOptions = false,
@@ -276,40 +359,7 @@ Tab:CreateButton({
 			
 			local workType = selectedWork
 			if bestWorkMode then
-				-- Tự động chọn work type tốt nhất dựa trên HP/Stats
-				local stats = {}
-				local count = 0
-				for _, abnoName in ipairs(selectedAbnos) do
-					local sel = normalizeSelected(abnoName)
-					local abno = pcall(function() return abnoFolder:FindFirstChild(sel) end) and abnoFolder:FindFirstChild(sel) or nil
-					if abno then
-						local hp = nil
-						pcall(function()
-							hp = abno:FindFirstChild('HP')
-						end)
-						if hp and hp:IsA('IntValue') then
-							stats[abnoName] = hp.Value
-							count = count + 1
-						end
-					end
-				end
-				
-				-- Lựa chọn dựa trên HP
-				if count > 0 then
-					local avgHp = 0
-					for _, hp in pairs(stats) do
-						avgHp = avgHp + hp
-					end
-					avgHp = avgHp / count
-					
-					if avgHp > 500 then
-						workType = 'Repression' -- Đối với enemy mạnh
-					elseif avgHp > 300 then
-						workType = 'Insight'
-					else
-						workType = 'Instinct'
-					end
-				end
+				workType = getBestWorkType(abnoFolder, selectedAbnos)
 			end
 			
 			local flavor = titleCase(workType)
@@ -356,7 +406,7 @@ task.spawn(function()
 				
 				local workType = selectedWork
 				if bestWorkMode then
-					workType = math.random() > 0.5 and 'Insight' or 'Instinct'
+					workType = getBestWorkType(abnoFolder, selectedAbnos)
 				end
 				
 				local flavor = titleCase(workType)
@@ -544,6 +594,145 @@ SuitTab:CreateButton({
 					Image = 4483362458,
 				})
 			end
+		end)
+	end,
+})
+
+-- ==========================================
+-- TAB: END GAME
+-- ==========================================
+local EndGameTab = Window:CreateTab('end game')
+EndGameTab:CreateSection('Quick Exit')
+
+EndGameTab:CreateButton({
+	Name = 'Leave Game (Thoát)',
+	Callback = function()
+		pcall(function()
+			LocalPlayer:Kick("Đã thoát khỏi game.")
+		end)
+	end,
+})
+
+EndGameTab:CreateButton({
+	Name = 'Restart Level (Khởi động lại)',
+	Callback = function()
+		pcall(function()
+			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'RestartLevelEvent')
+			if remote then
+				remote:FireServer()
+				Rayfield:Notify({
+					Title = "Thành công!",
+					Content = "Đã khởi động lại level.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+			else
+				-- Try alternative - teleport to escape point
+				local char = LocalPlayer.Character
+				if char then
+					local hrp = char:FindFirstChild("HumanoidRootPart")
+					if hrp then
+						-- Common escape spawn points
+						hrp.CFrame = CFrame.new(0, 100, 0)
+						Rayfield:Notify({
+							Title = "Thực hiện",
+							Content = "Di chuyển đến điểm thoát.",
+							Duration = 2,
+							Image = 4483362458,
+						})
+					end
+				end
+			end
+		end)
+	end,
+})
+
+EndGameTab:CreateButton({
+	Name = 'Force End Day',
+	Callback = function()
+		pcall(function()
+			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'EndDayEvent')
+			if remote then
+				remote:FireServer()
+				Rayfield:Notify({
+					Title = "Thành công!",
+					Content = "Buộc kết thúc ngày.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+			else
+				Rayfield:Notify({
+					Title = "Thất bại",
+					Content = "Không tìm thấy EndDayEvent.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+			end
+		end)
+	end,
+})
+
+EndGameTab:CreateButton({
+	Name = 'Teleport to Escape (Thoát về tàu)',
+	Callback = function()
+		pcall(function()
+			local char = LocalPlayer.Character
+			if char then
+				local hrp = char:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					-- Try to find escape area or use default position
+					local escapeArea = workspace:FindFirstChild("EscapeArea") or workspace:FindFirstChild("Exit")
+					
+					if escapeArea then
+						hrp.CFrame = escapeArea:GetBoundingBox().p
+					else
+						-- Default escape position (should be adjusted based on game)
+						hrp.CFrame = CFrame.new(0, 50, 0)
+					end
+					
+					Rayfield:Notify({
+						Title = "Thành công!",
+						Content = "Đã di chuyển đến điểm thoát.",
+						Duration = 2,
+						Image = 4483362458,
+					})
+				end
+			end
+		end)
+	end,
+})
+
+EndGameTab:CreateSection('Game Control')
+
+EndGameTab:CreateButton({
+	Name = 'Pause Game',
+	Callback = function()
+		pcall(function()
+			game:GetService("RunService"):Set3dRenderingEnabled(false)
+			task.wait(0.1)
+			game:GetService("RunService"):Set3dRenderingEnabled(true)
+			
+			Rayfield:Notify({
+				Title = "Đã tạm dừng",
+				Content = "Game đã được tạm dừng.",
+				Duration = 2,
+				Image = 4483362458,
+			})
+		end)
+	end,
+})
+
+EndGameTab:CreateButton({
+	Name = 'Check Server Status',
+	Callback = function()
+		pcall(function()
+			local isRunning = game:IsRunning()
+			Rayfield:Notify({
+				Title = "Trạng thái",
+				Content = "Game đang chạy: " .. tostring(isRunning),
+				Duration = 3,
+				Image = 4483362458,
+			})
 		end)
 	end,
 })
