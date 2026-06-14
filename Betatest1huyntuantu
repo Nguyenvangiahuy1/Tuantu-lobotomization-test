@@ -1,4 +1,34 @@
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local rayfieldCode
+local urlsToTry = {
+	'https://sirius.menu/rayfield', -- Link chính
+	'https://raw.githubusercontent.com/shlexware/Rayfield/main/source' -- Link dự phòng (Raw Github)
+}
+
+for _, url in ipairs(urlsToTry) do
+	local success, result = pcall(function()
+		return game:HttpGet(url)
+	end)
+	
+	if success and result and result ~= "" and not result:match("404: Not Found") then
+		rayfieldCode = result
+		break
+	end
+end
+
+if not rayfieldCode then
+	warn("Lỗi: Không thể tải giao diện Rayfield do mạng hoặc Executor chặn.")
+	error("Failed to load UI.")
+end
+
+local loadFunc = loadstring(rayfieldCode)
+if not loadFunc then
+	warn("Lỗi: Delta/Executor của bạn không dịch được mã giao diện.")
+	error("loadstring returned nil.")
+end
+
+local Rayfield = loadFunc()
+-- ===================================================================
+
 local Window = Rayfield:CreateWindow({Name = 'the "debug" button they call it', LoadingTitle = 'ready for the chaos?'})
 
 local Players = game:GetService('Players')
@@ -301,7 +331,6 @@ WeaponTab:CreateButton({
 			frame.BorderSizePixel = 0
 			frame.Parent = screenGui
 			
-			-- Logic di chuyển UI
 			local dragging, dragStart, startPos = false, nil, nil
 			frame.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 then 
@@ -384,44 +413,19 @@ WeaponTab:CreateButton({
 				while screenGui.Parent and task.wait(3) do updateList() end 
 			end)
 			updateList()
-			
-			local resizeHandle = Instance.new("Frame")
-			resizeHandle.Size = UDim2.new(0, 16, 0, 16)
-			resizeHandle.AnchorPoint = Vector2.new(1, 1)
-			resizeHandle.Position = UDim2.new(1, 0, 1, 0)
-			resizeHandle.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-			resizeHandle.BorderSizePixel = 0
-			resizeHandle.Active = true
-			resizeHandle.Parent = frame
-			
-			local resizing = false
-			resizeHandle.InputBegan:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = true end 
-			end)
-			resizeHandle.InputEnded:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = false end 
-			end)
-			
-			UserInputService.InputChanged:Connect(function(input)
-				if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then 
-					local newSizeX = math.clamp(input.Position.X - frame.AbsolutePosition.X, 200, 800)
-					local newSizeY = math.clamp(input.Position.Y - frame.AbsolutePosition.Y, 150, 600)
-					frame.Size = UDim2.new(0, newSizeX, 0, newSizeY)
-				end 
-			end)
 		end)
 	end,
 })
 
 -- ==========================================
--- TAB: GET ITEMS (TÍNH NĂNG MỚI - INVENTORY)
+-- TAB: GET ITEMS (TÍNH NĂNG INVENTORY)
 -- ==========================================
 local ItemTab = Window:CreateTab('Get Items')
 ItemTab:CreateSection('Spawner Vũ Khí & Đồ Dùng')
 
 ItemTab:CreateParagraph({
 	Title = "Lưu ý về Bảo mật (FE)", 
-	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn. Vì Roblox sử dụng FilteringEnabled (FE), một số đồ có thể hoạt động hoàn hảo, nhưng một số đồ bảo mật cao chỉ là ảo (không gây sát thương thực tế lên người chơi khác). Hãy test thử nhé!"
+	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn. Một số đồ vật ảo chỉ hiển thị ở Client do hệ thống bảo mật của Game."
 })
 
 ItemTab:CreateButton({
@@ -434,7 +438,6 @@ ItemTab:CreateButton({
 			local count = 0
 			local seen = {}
 			
-			-- Đánh dấu các item đã có để không bị lấy trùng
 			for _, t in ipairs(bp:GetChildren()) do
 				if t:IsA("Tool") then seen[t.Name] = true end
 			end
@@ -444,7 +447,6 @@ ItemTab:CreateButton({
 				end
 			end
 			
-			-- Tìm trong ReplicatedStorage (Nơi cất đồ chính của game)
 			for _, obj in ipairs(RepStorage:GetDescendants()) do
 				if obj:IsA("Tool") and not seen[obj.Name] then
 					local clone = obj:Clone()
@@ -456,7 +458,6 @@ ItemTab:CreateButton({
 				end
 			end
 			
-			-- Tìm những vũ khí bị đánh rơi ngoài Workspace
 			for _, obj in ipairs(workspace:GetDescendants()) do
 				if obj:IsA("Tool") and not seen[obj.Name] and (obj.Parent and not obj.Parent:FindFirstChild("Humanoid")) then
 					local clone = obj:Clone()
@@ -504,7 +505,7 @@ ItemTab:CreateButton({
 })
 
 -- ==========================================
--- AUTO APPLY SYSTEMS (Tự động kích hoạt khi cầm vũ khí)
+-- AUTO APPLY SYSTEMS 
 -- ==========================================
 local function applyDamageToTool(tool)
 	if tool:IsA('Tool') then
@@ -546,132 +547,8 @@ local function setupCharacter(character)
 	end)
 end
 
--- Connect để áp dụng stats mỗi khi nhân vật hồi sinh hoặc cầm tool
 LocalPlayer.CharacterAdded:Connect(setupCharacter)
 
-if LocalPlayer.Character then
-	setupCharacter(LocalPlayer.Character)
-end
-
-LocalPlayer:WaitForChild("Backpack").ChildAdded:Connect(function(child)
-	if child:IsA("Tool") then
-		applyHitboxToWeapon(child)
-		applyDamageToTool(child)
-	end
-end)
-
-task.spawn(function()
-	while task.wait(1) do
-		applyAllDamageToWeapons()
-	end
-end)
-btn.Size = UDim2.new(1, -10, 0, 25)
-						btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-						btn.Text = unit.Name
-						btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-						btn.TextSize = 14
-						btn.Font = Enum.Font.SourceSans
-						btn.Parent = scroll
-						
-						btn.MouseButton1Click:Connect(function()
-							local char = LocalPlayer.Character
-							local hrp = char and char:FindFirstChild("HumanoidRootPart")
-							if hrp and unit and unit.PrimaryPart then 
-								local pivot = unit:GetPivot().Position
-								local rayParams = RaycastParams.new()
-								rayParams.FilterDescendantsInstances = {unit}
-								rayParams.FilterType = Enum.RaycastFilterType.Exclude
-								local result = workspace:Raycast(pivot, Vector3.new(0, -50, 0), rayParams)
-								
-								local targetPos = result and result.Position or pivot
-								hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
-							end 
-						end)
-					end 
-				end
-				scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
-			end
-			
-			task.spawn(function()
-				while screenGui.Parent and task.wait(3) do 
-					updateList()
-				end 
-			end)
-			updateList()
-			
-			-- Resizing Logic
-			local resizeHandle = Instance.new("Frame")
-			resizeHandle.Size = UDim2.new(0, 16, 0, 16)
-			resizeHandle.AnchorPoint = Vector2.new(1, 1)
-			resizeHandle.Position = UDim2.new(1, 0, 1, 0)
-			resizeHandle.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-			resizeHandle.BorderSizePixel = 0
-			resizeHandle.Active = true
-			resizeHandle.Parent = frame
-			
-			local resizing = false
-			resizeHandle.InputBegan:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = true end 
-			end)
-			resizeHandle.InputEnded:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = false end 
-			end)
-			
-			UserInputService.InputChanged:Connect(function(input)
-				if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then 
-					local newSizeX = math.clamp(input.Position.X - frame.AbsolutePosition.X, 200, 800)
-					local newSizeY = math.clamp(input.Position.Y - frame.AbsolutePosition.Y, 150, 600)
-					frame.Size = UDim2.new(0, newSizeX, 0, newSizeY)
-				end 
-			end)
-		end)
-	end,
-})
-
-local function applyDamageToTool(tool)
-	if tool:IsA('Tool') then
-		local settings = tool:FindFirstChild('SettingValues')
-		if settings then
-			local maxVal = settings:FindFirstChild('MaxDamageValue')
-			local minVal = settings:FindFirstChild('MinDamageValue')
-			if maxVal then pcall(function() maxVal.Value = dmgMax end) end
-			if minVal then pcall(function() minVal.Value = dmgMin end) end
-		end
-	end
-end
-
-local function applyAllDamageToWeapons()
-	local bp = LocalPlayer:FindFirstChild('Backpack')
-	if bp then
-		for _, tool in ipairs(bp:GetChildren()) do applyDamageToTool(tool) end
-	end
-	local char = LocalPlayer.Character
-	if char then
-		for _, tool in ipairs(char:GetChildren()) do applyDamageToTool(tool) end
-	end
-end
-
-local function setupCharacter(character)
-	task.wait(1)
-	if infiniteAttackSpeed then
-		setAttackSpeedValue(math.huge)
-	else
-		setAttackSpeedValue(attackSpeedValue)
-	end
-	applyAllDamageToWeapons()
-	
-	character.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") then
-			applyHitboxToWeapon(child)
-			applyDamageToTool(child)
-		end
-	end)
-end
-
--- Connect for future spawns
-LocalPlayer.CharacterAdded:Connect(setupCharacter)
-
--- Setup immediately if character already exists
 if LocalPlayer.Character then
 	setupCharacter(LocalPlayer.Character)
 end
