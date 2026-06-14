@@ -36,6 +36,9 @@ local RepStorage = game:GetService('ReplicatedStorage')
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
+-- ==========================================
+-- UTILITY FUNCTIONS
+-- ==========================================
 local function listChildren(folder)
 	local t = {}
 	if folder then
@@ -72,28 +75,85 @@ local function titleCase(s)
 	return string.upper(string.sub(s, 1, 1)) .. string.lower(string.sub(s, 2))
 end
 
+local function getTableLength(t)
+	local count = 0
+	for _ in pairs(t) do count = count + 1 end
+	return count
+end
+
 -- Đợi load map và dữ liệu
 local abnoFolder = workspace:WaitForChild('Abnormalities', 5)
 local assetsFolder = RepStorage:WaitForChild('Assets', 5)
 local talentsFolder = assetsFolder and assetsFolder:WaitForChild('Talents', 5)
+local suitsFolder = assetsFolder and assetsFolder:WaitForChild('Suits', 5)
 
-local function getAbnoNames() return listChildren(abnoFolder) end
-local function getTalentNames() return listChildren(talentsFolder) end
+local function getAbnoNames() return listChildren(abnoFolder or {}) end
+local function getTalentNames() return listChildren(talentsFolder or {}) end
+local function getSuitNames() return listChildren(suitsFolder or {}) end
 
 local abnoList = getAbnoNames()
 local talentList = getTalentNames()
+local suitList = getSuitNames()
 
 local selectedWork = 'Instinct'
 local selectedTalentRaw = talentList[1] or ''
 local selectedAbnos = {}
+local selectedSuit = suitList[1] or ''
+local autoWorkEnabled = false
+local autoWorkDelay = 5
+local bestWorkMode = true
 
 -- ==========================================
 -- TAB: ABNO WORKING
 -- ==========================================
 local Tab = Window:CreateTab('abno working')
 Tab:CreateSection('Controls')
+
+Tab:CreateToggle({
+	Name = 'Auto Work (Multiple)',
+	CurrentValue = false,
+	Callback = function(Value)
+		autoWorkEnabled = Value
+		if Value then
+			Rayfield:Notify({
+				Title = "Auto Work Bật",
+				Content = "Tự động làm việc với các Abnormalities đã chọn.",
+				Duration = 3,
+				Image = 4483362458,
+			})
+		end
+	end,
+})
+
+Tab:CreateInput({
+	Name = 'Auto Work Delay (Giây)',
+	PlaceholderText = '5',
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		local v = tonumber(text)
+		if v and v > 0 then autoWorkDelay = v end
+	end,
+})
+
+Tab:CreateToggle({
+	Name = 'Smart Work Mode (Tự chọn tốt nhất)',
+	CurrentValue = true,
+	Callback = function(Value)
+		bestWorkMode = Value
+		if Value then
+			Rayfield:Notify({
+				Title = "Smart Mode Bật",
+				Content = "Sẽ tự động chọn cách làm việc tối ưu nhất.",
+				Duration = 3,
+				Image = 4483362458,
+			})
+		end
+	end,
+})
+
 Tab:CreateSection('Select Abnormalities')
 
+-- Refresh list abnormalities
 for _, abno in ipairs(abnoList) do
 	Tab:CreateToggle({
 		Name = abno,
@@ -119,6 +179,28 @@ Tab:CreateButton({
 	Name = 'Clear Selection',
 	Callback = function()
 		selectedAbnos = {}
+		Rayfield:Notify({
+			Title = "Đã xóa",
+			Content = "Xóa sạch danh sách Abnormalities.",
+			Duration = 2,
+			Image = 4483362458,
+		})
+	end,
+})
+
+Tab:CreateButton({
+	Name = 'Select All',
+	Callback = function()
+		selectedAbnos = {}
+		for _, abno in ipairs(abnoList) do
+			table.insert(selectedAbnos, abno)
+		end
+		Rayfield:Notify({
+			Title = "Đã chọn tất cả",
+			Content = "Chọn " .. #selectedAbnos .. " Abnormalities.",
+			Duration = 2,
+			Image = 4483362458,
+		})
 	end,
 })
 
@@ -133,25 +215,115 @@ Tab:CreateDropdown({
 })
 
 Tab:CreateButton({
-	Name = 'Work',
+	Name = 'Work (1 Time)',
 	Callback = function()
 		pcall(function()
-			if #selectedAbnos == 0 then return end
+			if #selectedAbnos == 0 then 
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Vui lòng chọn ít nhất 1 Abnormality.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return 
+			end
 			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'WorkEvent')
-			if not remote then return end
-			local flavor = titleCase(normalizeSelected(selectedWork))
+			if not remote then 
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Không tìm thấy WorkEvent.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return 
+			end
+			
+			local workType = selectedWork
+			if bestWorkMode then
+				-- Tự động chọn work type tốt nhất dựa trên HP/Stats
+				local stats = {}
+				for _, abnoName in ipairs(selectedAbnos) do
+					local sel = normalizeSelected(abnoName)
+					local abno = abnoFolder and abnoFolder:FindFirstChild(sel)
+					if abno then
+						local hp = abno:FindFirstChild('HP')
+						if hp and hp:IsA('IntValue') then
+							stats[abnoName] = hp.Value
+						end
+					end
+				end
+				
+				-- Lựa chọn dựa trên HP
+				local avgHp = 0
+				for _, hp in pairs(stats) do
+					avgHp = avgHp + hp
+				end
+				avgHp = avgHp / getTableLength(stats)
+				
+				if avgHp > 500 then
+					workType = 'Repression' -- Đối với enemy mạnh
+				elseif avgHp > 300 then
+					workType = 'Insight'
+				else
+					workType = 'Instinct'
+				end
+			end
+			
+			local flavor = titleCase(workType)
+			local successCount = 0
 			
 			for _, abnoName in ipairs(selectedAbnos) do
 				local sel = normalizeSelected(abnoName)
 				local abno = abnoFolder and abnoFolder:FindFirstChild(sel)
 				if abno then
 					local wt = abno:FindFirstChild('WorkTablet')
-					if wt then remote:FireServer(wt, flavor) end
+					if wt then 
+						remote:FireServer(wt, flavor)
+						successCount = successCount + 1
+					end
 				end
 			end
+			
+			Rayfield:Notify({
+				Title = "Hoàn thành!",
+				Content = "Làm việc thành công với " .. successCount .. " Abnormalities (" .. workType .. ").",
+				Duration = 3,
+				Image = 4483362458,
+			})
 		end)
 	end,
 })
+
+-- Auto work loop
+task.spawn(function()
+	while true do
+		task.wait(autoWorkDelay)
+		if autoWorkEnabled and #selectedAbnos > 0 then
+			pcall(function()
+				local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'WorkEvent')
+				if not remote then return end
+				
+				local workType = selectedWork
+				if bestWorkMode then
+					workType = math.random() > 0.5 and 'Insight' or 'Instinct'
+				end
+				
+				local flavor = titleCase(workType)
+				
+				for _, abnoName in ipairs(selectedAbnos) do
+					local sel = normalizeSelected(abnoName)
+					local abno = abnoFolder and abnoFolder:FindFirstChild(sel)
+					if abno then
+						local wt = abno:FindFirstChild('WorkTablet')
+						if wt then 
+							remote:FireServer(wt, flavor)
+						end
+					end
+				end
+			end)
+		end
+	end
+end)
 
 -- ==========================================
 -- TAB: CARD SELECTOR
@@ -173,10 +345,125 @@ CardTab:CreateButton({
 	Callback = function()
 		pcall(function()
 			local sel = normalizeSelected(selectedTalentRaw)
-			if sel == '' then return end
+			if sel == '' then 
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Vui lòng chọn một Talent.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return 
+			end
 			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'SelectCardEvent')
-			if not remote then return end
+			if not remote then 
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Không tìm thấy SelectCardEvent.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return 
+			end
 			remote:FireServer(sel)
+			Rayfield:Notify({
+				Title = "Thành công!",
+				Content = "Đã chọn Talent: " .. sel,
+				Duration = 2,
+				Image = 4483362458,
+			})
+		end)
+	end,
+})
+
+-- ==========================================
+-- TAB: SUIT SYSTEM
+-- ==========================================
+local SuitTab = Window:CreateTab('suit system')
+SuitTab:CreateSection('Chọn Suit')
+
+SuitTab:CreateDropdown({
+	Name = 'Available Suits',
+	Options = suitList,
+	CurrentOption = {selectedSuit},
+	MultipleOptions = false,
+	Callback = function(opt)
+		selectedSuit = opt[1]
+	end,
+})
+
+SuitTab:CreateButton({
+	Name = 'Equip Suit',
+	Callback = function()
+		pcall(function()
+			local sel = normalizeSelected(selectedSuit)
+			if sel == '' then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Vui lòng chọn một Suit.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
+			local suit = suitsFolder and suitsFolder:FindFirstChild(sel)
+			if not suit then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Không tìm thấy Suit: " .. sel,
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
+			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'EquipSuitEvent')
+			if remote then
+				remote:FireServer(suit)
+				Rayfield:Notify({
+					Title = "Thành công!",
+					Content = "Đã mặc Suit: " .. sel,
+					Duration = 2,
+					Image = 4483362458,
+				})
+			else
+				-- Try alternative method
+				local char = LocalPlayer.Character
+				if char then
+					local humanoid = char:FindFirstChild("Humanoid")
+					if humanoid then
+						suit:Clone().Parent = char
+						Rayfield:Notify({
+							Title = "Thành công!",
+							Content = "Đã mặc Suit: " .. sel,
+							Duration = 2,
+							Image = 4483362458,
+						})
+					end
+				end
+			end
+		end)
+	end,
+})
+
+SuitTab:CreateButton({
+	Name = 'Remove Suit',
+	Callback = function()
+		pcall(function()
+			local char = LocalPlayer.Character
+			if char then
+				for _, child in ipairs(char:GetChildren()) do
+					if child:IsA("Accessory") or child.Name:match("Suit") or child.Name:match("Body") then
+						child:Destroy()
+					end
+				end
+				Rayfield:Notify({
+					Title = "Đã gỡ",
+					Content = "Đã gỡ Suit hiện tại.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+			end
 		end)
 	end,
 })
@@ -234,6 +521,12 @@ WeaponTab:CreateButton({
 	Name = 'Apply Hitbox Size',
 	Callback = function()
 		applyHitboxToAllWeapons()
+		Rayfield:Notify({
+			Title = "Thành công!",
+			Content = "Đã áp dụng Hitbox Size: " .. hitboxSize,
+			Duration = 2,
+			Image = 4483362458,
+		})
 	end,
 })
 
@@ -258,6 +551,19 @@ WeaponTab:CreateInput({
 	Callback = function(text)
 		local v = tonumber(text)
 		if v then dmgMin = v end
+	end,
+})
+
+WeaponTab:CreateButton({
+	Name = 'Apply Damage',
+	Callback = function()
+		applyAllDamageToWeapons()
+		Rayfield:Notify({
+			Title = "Thành công!",
+			Content = "Đã áp dụng Damage: " .. dmgMin .. " - " .. dmgMax,
+			Duration = 2,
+			Image = 4483362458,
+		})
 	end,
 })
 
@@ -306,6 +612,12 @@ WeaponTab:CreateButton({
 		else
 			setAttackSpeedValue(attackSpeedValue)
 		end
+		Rayfield:Notify({
+			Title = "Thành công!",
+			Content = "Đã áp dụng Attack Speed.",
+			Duration = 2,
+			Image = 4483362458,
+		})
 	end,
 })
 
@@ -413,6 +725,13 @@ WeaponTab:CreateButton({
 				while screenGui.Parent and task.wait(3) do updateList() end 
 			end)
 			updateList()
+			
+			Rayfield:Notify({
+				Title = "Thành công!",
+				Content = "Unit Tracker đã được tải.",
+				Duration = 2,
+				Image = 4483362458,
+			})
 		end)
 	end,
 })
@@ -425,7 +744,7 @@ ItemTab:CreateSection('Spawner Vũ Khí & Đồ Dùng')
 
 ItemTab:CreateParagraph({
 	Title = "Lưu ý về Bảo mật (FE)", 
-	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn. Một số đồ vật ảo chỉ hiển thị ở Client do hệ thống bảo mật của Game."
+	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn. Một số đồ vật ảo chỉ hiển thị ở Client do hệ thống bảo mật."
 })
 
 ItemTab:CreateButton({
@@ -553,12 +872,15 @@ if LocalPlayer.Character then
 	setupCharacter(LocalPlayer.Character)
 end
 
-LocalPlayer:WaitForChild("Backpack").ChildAdded:Connect(function(child)
-	if child:IsA("Tool") then
-		applyHitboxToWeapon(child)
-		applyDamageToTool(child)
-	end
-end)
+local backpack = LocalPlayer:WaitForChild("Backpack", 5)
+if backpack then
+	backpack.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			applyHitboxToWeapon(child)
+			applyDamageToTool(child)
+		end
+	end)
+end
 
 task.spawn(function()
 	while task.wait(1) do
