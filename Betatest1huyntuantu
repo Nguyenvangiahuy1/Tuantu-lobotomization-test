@@ -41,21 +41,25 @@ local LocalPlayer = Players.LocalPlayer
 -- ==========================================
 local function listChildren(folder)
 	local t = {}
-	if folder then
-		for _, v in ipairs(folder:GetChildren()) do
-			table.insert(t, v.Name)
-		end
+	if folder and typeof(folder) == 'Instance' then
+		pcall(function()
+			for _, v in ipairs(folder:GetChildren()) do
+				table.insert(t, v.Name)
+			end
+		end)
 	end
 	table.sort(t)
 	return t
 end
 
 local function getFolder(root, ...)
+	if not root then return nil end
 	local cur = root
 	for i = 1, select('#', ...) do
 		local n = select(i, ...)
 		if not cur then return nil end
-		cur = cur:FindFirstChild(n)
+		cur = pcall(function() return cur:FindFirstChild(n) end) and cur:FindFirstChild(n) or nil
+		if not cur then return nil end
 	end
 	return cur
 end
@@ -77,19 +81,40 @@ end
 
 local function getTableLength(t)
 	local count = 0
-	for _ in pairs(t) do count = count + 1 end
+	if type(t) == 'table' then
+		for _ in pairs(t) do count = count + 1 end
+	end
 	return count
 end
 
--- Đợi load map và dữ liệu
-local abnoFolder = workspace:WaitForChild('Abnormalities', 5)
-local assetsFolder = RepStorage:WaitForChild('Assets', 5)
-local talentsFolder = assetsFolder and assetsFolder:WaitForChild('Talents', 5)
-local suitsFolder = assetsFolder and assetsFolder:WaitForChild('Suits', 5)
+-- Safe wait for children
+local function safeWaitForChild(parent, name, timeout)
+	if not parent then return nil end
+	timeout = timeout or 3
+	local result = nil
+	pcall(function()
+		result = parent:WaitForChild(name, timeout)
+	end)
+	return result
+end
 
-local function getAbnoNames() return listChildren(abnoFolder or {}) end
-local function getTalentNames() return listChildren(talentsFolder or {}) end
-local function getSuitNames() return listChildren(suitsFolder or {}) end
+-- Đợi load map và dữ liệu
+local abnoFolder = safeWaitForChild(workspace, 'Abnormalities', 5)
+local assetsFolder = safeWaitForChild(RepStorage, 'Assets', 5)
+local talentsFolder = assetsFolder and safeWaitForChild(assetsFolder, 'Talents', 5) or nil
+local suitsFolder = assetsFolder and safeWaitForChild(assetsFolder, 'Suits', 5) or nil
+
+local function getAbnoNames() 
+	return listChildren(abnoFolder) 
+end
+
+local function getTalentNames() 
+	return listChildren(talentsFolder) 
+end
+
+local function getSuitNames() 
+	return listChildren(suitsFolder) 
+end
 
 local abnoList = getAbnoNames()
 local talentList = getTalentNames()
@@ -227,6 +252,17 @@ Tab:CreateButton({
 				})
 				return 
 			end
+			
+			if not abnoFolder then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Chưa tải xong Abnormalities folder.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
 			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'WorkEvent')
 			if not remote then 
 				Rayfield:Notify({
@@ -242,30 +278,37 @@ Tab:CreateButton({
 			if bestWorkMode then
 				-- Tự động chọn work type tốt nhất dựa trên HP/Stats
 				local stats = {}
+				local count = 0
 				for _, abnoName in ipairs(selectedAbnos) do
 					local sel = normalizeSelected(abnoName)
-					local abno = abnoFolder and abnoFolder:FindFirstChild(sel)
+					local abno = pcall(function() return abnoFolder:FindFirstChild(sel) end) and abnoFolder:FindFirstChild(sel) or nil
 					if abno then
-						local hp = abno:FindFirstChild('HP')
+						local hp = nil
+						pcall(function()
+							hp = abno:FindFirstChild('HP')
+						end)
 						if hp and hp:IsA('IntValue') then
 							stats[abnoName] = hp.Value
+							count = count + 1
 						end
 					end
 				end
 				
 				-- Lựa chọn dựa trên HP
-				local avgHp = 0
-				for _, hp in pairs(stats) do
-					avgHp = avgHp + hp
-				end
-				avgHp = avgHp / getTableLength(stats)
-				
-				if avgHp > 500 then
-					workType = 'Repression' -- Đối với enemy mạnh
-				elseif avgHp > 300 then
-					workType = 'Insight'
-				else
-					workType = 'Instinct'
+				if count > 0 then
+					local avgHp = 0
+					for _, hp in pairs(stats) do
+						avgHp = avgHp + hp
+					end
+					avgHp = avgHp / count
+					
+					if avgHp > 500 then
+						workType = 'Repression' -- Đối với enemy mạnh
+					elseif avgHp > 300 then
+						workType = 'Insight'
+					else
+						workType = 'Instinct'
+					end
 				end
 			end
 			
@@ -274,11 +317,19 @@ Tab:CreateButton({
 			
 			for _, abnoName in ipairs(selectedAbnos) do
 				local sel = normalizeSelected(abnoName)
-				local abno = abnoFolder and abnoFolder:FindFirstChild(sel)
+				local abno = nil
+				pcall(function()
+					abno = abnoFolder:FindFirstChild(sel)
+				end)
 				if abno then
-					local wt = abno:FindFirstChild('WorkTablet')
+					local wt = nil
+					pcall(function()
+						wt = abno:FindFirstChild('WorkTablet')
+					end)
 					if wt then 
-						remote:FireServer(wt, flavor)
+						pcall(function()
+							remote:FireServer(wt, flavor)
+						end)
 						successCount = successCount + 1
 					end
 				end
@@ -298,7 +349,7 @@ Tab:CreateButton({
 task.spawn(function()
 	while true do
 		task.wait(autoWorkDelay)
-		if autoWorkEnabled and #selectedAbnos > 0 then
+		if autoWorkEnabled and #selectedAbnos > 0 and abnoFolder then
 			pcall(function()
 				local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'WorkEvent')
 				if not remote then return end
@@ -312,11 +363,19 @@ task.spawn(function()
 				
 				for _, abnoName in ipairs(selectedAbnos) do
 					local sel = normalizeSelected(abnoName)
-					local abno = abnoFolder and abnoFolder:FindFirstChild(sel)
+					local abno = nil
+					pcall(function()
+						abno = abnoFolder:FindFirstChild(sel)
+					end)
 					if abno then
-						local wt = abno:FindFirstChild('WorkTablet')
+						local wt = nil
+						pcall(function()
+							wt = abno:FindFirstChild('WorkTablet')
+						end)
 						if wt then 
-							remote:FireServer(wt, flavor)
+							pcall(function()
+								remote:FireServer(wt, flavor)
+							end)
 						end
 					end
 				end
@@ -406,7 +465,21 @@ SuitTab:CreateButton({
 				return
 			end
 			
-			local suit = suitsFolder and suitsFolder:FindFirstChild(sel)
+			if not suitsFolder then
+				Rayfield:Notify({
+					Title = "Lỗi",
+					Content = "Suits folder chưa được tải.",
+					Duration = 2,
+					Image = 4483362458,
+				})
+				return
+			end
+			
+			local suit = nil
+			pcall(function()
+				suit = suitsFolder:FindFirstChild(sel)
+			end)
+			
 			if not suit then
 				Rayfield:Notify({
 					Title = "Lỗi",
@@ -419,7 +492,9 @@ SuitTab:CreateButton({
 			
 			local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'EquipSuitEvent')
 			if remote then
-				remote:FireServer(suit)
+				pcall(function()
+					remote:FireServer(suit)
+				end)
 				Rayfield:Notify({
 					Title = "Thành công!",
 					Content = "Đã mặc Suit: " .. sel,
@@ -430,9 +505,14 @@ SuitTab:CreateButton({
 				-- Try alternative method
 				local char = LocalPlayer.Character
 				if char then
-					local humanoid = char:FindFirstChild("Humanoid")
+					local humanoid = nil
+					pcall(function()
+						humanoid = char:FindFirstChild("Humanoid")
+					end)
 					if humanoid then
-						suit:Clone().Parent = char
+						pcall(function()
+							suit:Clone().Parent = char
+						end)
 						Rayfield:Notify({
 							Title = "Thành công!",
 							Content = "Đã mặc Suit: " .. sel,
@@ -453,8 +533,8 @@ SuitTab:CreateButton({
 			local char = LocalPlayer.Character
 			if char then
 				for _, child in ipairs(char:GetChildren()) do
-					if child:IsA("Accessory") or child.Name:match("Suit") or child.Name:match("Body") then
-						child:Destroy()
+					if child:IsA("Accessory") or (child.Name and (child.Name:match("Suit") or child.Name:match("Body"))) then
+						pcall(function() child:Destroy() end)
 					end
 				end
 				Rayfield:Notify({
@@ -487,34 +567,38 @@ WeaponTab:CreateInput({
 
 local function applyHitboxToWeapon(tool)
 	if tool and tool:IsA("Tool") then
-		local anims = tool:FindFirstChild("Animations")
-		if anims then
-			local attackAnims = anims:FindFirstChild("AttackAnimations")
-			if attackAnims then
-				for _, animFolder in ipairs(attackAnims:GetChildren()) do
-					local hitboxValue = animFolder:FindFirstChild("HitboxSize")
-					if hitboxValue and hitboxValue:IsA("Vector3Value") then
-						hitboxValue.Value = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+		pcall(function()
+			local anims = tool:FindFirstChild("Animations")
+			if anims then
+				local attackAnims = anims:FindFirstChild("AttackAnimations")
+				if attackAnims then
+					for _, animFolder in ipairs(attackAnims:GetChildren()) do
+						local hitboxValue = animFolder:FindFirstChild("HitboxSize")
+						if hitboxValue and hitboxValue:IsA("Vector3Value") then
+							hitboxValue.Value = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+						end
 					end
 				end
 			end
-		end
+		end)
 	end
 end
 
 local function applyHitboxToAllWeapons()
-	local character = LocalPlayer.Character
-	if character then
-		for _, child in ipairs(character:GetChildren()) do
-			if child:IsA("Tool") then applyHitboxToWeapon(child) end
+	pcall(function()
+		local character = LocalPlayer.Character
+		if character then
+			for _, child in ipairs(character:GetChildren()) do
+				if child:IsA("Tool") then applyHitboxToWeapon(child) end
+			end
 		end
-	end
-	local backpack = LocalPlayer:FindFirstChild("Backpack")
-	if backpack then
-		for _, child in ipairs(backpack:GetChildren()) do
-			if child:IsA("Tool") then applyHitboxToWeapon(child) end
+		local backpack = LocalPlayer:FindFirstChild("Backpack")
+		if backpack then
+			for _, child in ipairs(backpack:GetChildren()) do
+				if child:IsA("Tool") then applyHitboxToWeapon(child) end
+			end
 		end
-	end
+	end)
 end
 
 WeaponTab:CreateButton({
@@ -584,9 +668,12 @@ WeaponTab:CreateInput({
 local function setAttackSpeedValue(val)
 	pcall(function()
 		local units = workspace:WaitForChild('Units', 2)
-		local playerUnit = units and units:FindFirstChild(LocalPlayer.Name)
-		local charStats = playerUnit and playerUnit:FindFirstChild('CharStats')
-		local attackSpeed = charStats and charStats:FindFirstChild('AttackSpeed')
+		if not units then return end
+		local playerUnit = units:FindFirstChild(LocalPlayer.Name)
+		if not playerUnit then return end
+		local charStats = playerUnit:FindFirstChild('CharStats')
+		if not charStats then return end
+		local attackSpeed = charStats:FindFirstChild('AttackSpeed')
 		if attackSpeed then attackSpeed.Value = val end
 	end)
 end
@@ -626,7 +713,9 @@ WeaponTab:CreateButton({
 	Name = "Load Unit Tracker",
 	Callback = function()
 		pcall(function()
-			local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+			local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
+			if not playerGui then return end
+			
 			local oldTracker = playerGui:FindFirstChild("UnitTracker")
 			if oldTracker then oldTracker:Destroy() end
 			
@@ -704,17 +793,19 @@ WeaponTab:CreateButton({
 						btn.Parent = scroll
 						
 						btn.MouseButton1Click:Connect(function()
-							local char = LocalPlayer.Character
-							local hrp = char and char:FindFirstChild("HumanoidRootPart")
-							if hrp and unit and unit.PrimaryPart then 
-								local pivot = unit:GetPivot().Position
-								local rayParams = RaycastParams.new()
-								rayParams.FilterDescendantsInstances = {unit}
-								rayParams.FilterType = Enum.RaycastFilterType.Exclude
-								local result = workspace:Raycast(pivot, Vector3.new(0, -50, 0), rayParams)
-								local targetPos = result and result.Position or pivot
-								hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
-							end 
+							pcall(function()
+								local char = LocalPlayer.Character
+								local hrp = char and char:FindFirstChild("HumanoidRootPart")
+								if hrp and unit and unit.PrimaryPart then 
+									local pivot = unit:GetPivot().Position
+									local rayParams = RaycastParams.new()
+									rayParams.FilterDescendantsInstances = {unit}
+									rayParams.FilterType = Enum.RaycastFilterType.Exclude
+									local result = workspace:Raycast(pivot, Vector3.new(0, -50, 0), rayParams)
+									local targetPos = result and result.Position or pivot
+									hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+								end 
+							end)
 						end)
 					end 
 				end
@@ -744,7 +835,7 @@ ItemTab:CreateSection('Spawner Vũ Khí & Đồ Dùng')
 
 ItemTab:CreateParagraph({
 	Title = "Lưu ý về Bảo mật (FE)", 
-	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn. Một số đồ vật ảo chỉ hiển thị ở Client do hệ thống bảo mật."
+	Content = "Các vũ khí/E.G.O sẽ được hệ thống quét và sao chép trực tiếp vào balo của bạn."
 })
 
 ItemTab:CreateButton({
@@ -790,7 +881,7 @@ ItemTab:CreateButton({
 			
 			Rayfield:Notify({
 				Title = "Thành công!",
-				Content = "Đã tìm và đưa " .. tostring(count) .. " vật phẩm vào Inventory của bạn!",
+				Content = "Đã tìm và đưa " .. tostring(count) .. " vật phẩm vào Inventory!",
 				Duration = 5,
 				Image = 4483362458,
 			})
@@ -815,7 +906,7 @@ ItemTab:CreateButton({
 			
 			Rayfield:Notify({
 				Title = "Đã dọn dẹp",
-				Content = "Đã xóa sạch đồ trong balo để tránh giật lag.",
+				Content = "Đã xóa sạch đồ trong balo.",
 				Duration = 3,
 				Image = 4483362458,
 			})
@@ -827,42 +918,48 @@ ItemTab:CreateButton({
 -- AUTO APPLY SYSTEMS 
 -- ==========================================
 local function applyDamageToTool(tool)
-	if tool:IsA('Tool') then
-		local settings = tool:FindFirstChild('SettingValues')
-		if settings then
-			local maxVal = settings:FindFirstChild('MaxDamageValue')
-			local minVal = settings:FindFirstChild('MinDamageValue')
-			if maxVal then pcall(function() maxVal.Value = dmgMax end) end
-			if minVal then pcall(function() minVal.Value = dmgMin end) end
+	pcall(function()
+		if tool:IsA('Tool') then
+			local settings = tool:FindFirstChild('SettingValues')
+			if settings then
+				local maxVal = settings:FindFirstChild('MaxDamageValue')
+				local minVal = settings:FindFirstChild('MinDamageValue')
+				if maxVal then pcall(function() maxVal.Value = dmgMax end) end
+				if minVal then pcall(function() minVal.Value = dmgMin end) end
+			end
 		end
-	end
+	end)
 end
 
 local function applyAllDamageToWeapons()
-	local bp = LocalPlayer:FindFirstChild('Backpack')
-	if bp then
-		for _, tool in ipairs(bp:GetChildren()) do applyDamageToTool(tool) end
-	end
-	local char = LocalPlayer.Character
-	if char then
-		for _, tool in ipairs(char:GetChildren()) do applyDamageToTool(tool) end
-	end
+	pcall(function()
+		local bp = LocalPlayer:FindFirstChild('Backpack')
+		if bp then
+			for _, tool in ipairs(bp:GetChildren()) do applyDamageToTool(tool) end
+		end
+		local char = LocalPlayer.Character
+		if char then
+			for _, tool in ipairs(char:GetChildren()) do applyDamageToTool(tool) end
+		end
+	end)
 end
 
 local function setupCharacter(character)
-	task.wait(1)
-	if infiniteAttackSpeed then
-		setAttackSpeedValue(math.huge)
-	else
-		setAttackSpeedValue(attackSpeedValue)
-	end
-	applyAllDamageToWeapons()
-	
-	character.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") then
-			applyHitboxToWeapon(child)
-			applyDamageToTool(child)
+	pcall(function()
+		task.wait(1)
+		if infiniteAttackSpeed then
+			setAttackSpeedValue(math.huge)
+		else
+			setAttackSpeedValue(attackSpeedValue)
 		end
+		applyAllDamageToWeapons()
+		
+		character.ChildAdded:Connect(function(child)
+			if child:IsA("Tool") then
+				applyHitboxToWeapon(child)
+				applyDamageToTool(child)
+			end
+		end)
 	end)
 end
 
