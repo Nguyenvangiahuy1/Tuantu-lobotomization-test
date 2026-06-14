@@ -217,7 +217,6 @@ local autoGiftEnabled = false
 local autoGiftDelay = 10
 
 -- NEW: Speed & Damage auto-apply
-local autoSpeedDamageEnabled = false
 local hitboxSize = 10
 local dmgMax = 1500
 local dmgMin = 1500
@@ -408,9 +407,9 @@ Tab:CreateButton({
 	end,
 })
 
--- Auto work loop - FIX: Thêm delay trước khi gọi lần đầu
+-- Auto work loop
 task.spawn(function()
-	task.wait(autoWorkDelay) -- Chờ trước khi bắt đầu
+	task.wait(autoWorkDelay)
 	while true do
 		task.wait(autoWorkDelay)
 		if autoWorkEnabled and #selectedAbnos > 0 and abnoFolder then
@@ -453,7 +452,9 @@ end)
 -- ==========================================
 local CardTab = Window:CreateTab('card selector')
 CardTab:CreateSection('Talent')
-CardTab:CreateDropdown({
+
+-- FIX: Dropdown callback đổi tên talent khi select
+local talentDropdown = CardTab:CreateDropdown({
 	Name = 'Talent',
 	Options = talentList,
 	CurrentOption = {selectedTalentRaw},
@@ -498,8 +499,8 @@ CardTab:CreateButton({
 	end,
 })
 
--- NEW: ANOMALY GIFT SYSTEM
-CardTab:CreateSection('Anomaly Gift')
+-- NEW: ANOMALY GIFT SYSTEM (cho Player, không phải Abno)
+CardTab:CreateSection('Anomaly Gift (Player)')
 
 -- Refresh gift list
 local function refreshGiftList()
@@ -514,7 +515,7 @@ end
 
 refreshGiftList()
 
-CardTab:CreateDropdown({
+local giftDropdown = CardTab:CreateDropdown({
 	Name = 'Select Gift',
 	Options = giftList,
 	CurrentOption = {selectedGift},
@@ -525,23 +526,13 @@ CardTab:CreateDropdown({
 })
 
 CardTab:CreateButton({
-	Name = 'Add Gift to Abnormality',
+	Name = 'Add Gift to Self',
 	Callback = function()
 		pcall(function()
 			if selectedGift == '' then
 				Rayfield:Notify({
 					Title = "Lỗi",
 					Content = "Vui lòng chọn một Gift.",
-					Duration = 2,
-					Image = 4483362458,
-				})
-				return
-			end
-			
-			if #selectedAbnos == 0 then
-				Rayfield:Notify({
-					Title = "Lỗi",
-					Content = "Vui lòng chọn ít nhất 1 Abnormality.",
 					Duration = 2,
 					Image = 4483362458,
 				})
@@ -559,24 +550,14 @@ CardTab:CreateButton({
 				return
 			end
 			
-			local successCount = 0
-			for _, abnoName in ipairs(selectedAbnos) do
-				local sel = normalizeSelected(abnoName)
-				local abno = nil
-				pcall(function()
-					abno = abnoFolder:FindFirstChild(sel)
-				end)
-				if abno then
-					pcall(function()
-						remote:FireServer(abno, selectedGift)
-						successCount = successCount + 1
-					end)
-				end
-			end
+			-- FIX: Gọi gift cho Player (LocalPlayer), không phải Abnormality
+			pcall(function()
+				remote:FireServer(LocalPlayer, selectedGift)
+			end)
 			
 			Rayfield:Notify({
 				Title = "Thành công!",
-				Content = "Đã thêm Gift cho " .. successCount .. " Abnormalities.",
+				Content = "Đã thêm Gift: " .. selectedGift,
 				Duration = 2,
 				Image = 4483362458,
 			})
@@ -602,28 +583,17 @@ CardTab:CreateInput({
 	end,
 })
 
--- Auto gift loop
+-- Auto gift loop - FIX: Cho player, không phải abno
 task.spawn(function()
 	task.wait(autoGiftDelay)
 	while true do
 		task.wait(autoGiftDelay)
-		if autoGiftEnabled and selectedGift ~= '' and #selectedAbnos > 0 and abnoFolder then
+		if autoGiftEnabled and selectedGift ~= '' then
 			pcall(function()
 				local remote = getFolder(RepStorage, 'Assets', 'RemoteEvents', 'AddGiftEvent')
 				if not remote then return end
 				
-				for _, abnoName in ipairs(selectedAbnos) do
-					local sel = normalizeSelected(abnoName)
-					local abno = nil
-					pcall(function()
-						abno = abnoFolder:FindFirstChild(sel)
-					end)
-					if abno then
-						pcall(function()
-							remote:FireServer(abno, selectedGift)
-						end)
-					end
-				end
+				remote:FireServer(LocalPlayer, selectedGift)
 			end)
 		end
 	end
@@ -929,38 +899,6 @@ local function applyHitboxToAllWeapons()
 	end)
 end
 
--- FIX: Thêm hàm applyAllDamageToWeapons
-local function applyAllDamageToWeapons()
-	pcall(function()
-		local character = LocalPlayer.Character
-		if character then
-			for _, child in ipairs(character:GetChildren()) do
-				if child:IsA("Tool") then
-					pcall(function()
-						local damage = child:FindFirstChild("Damage")
-						if damage and damage:IsA("IntValue") then
-							damage.Value = math.random(dmgMin, dmgMax)
-						end
-					end)
-				end
-			end
-		end
-		local backpack = LocalPlayer:FindFirstChild("Backpack")
-		if backpack then
-			for _, child in ipairs(backpack:GetChildren()) do
-				if child:IsA("Tool") then
-					pcall(function()
-						local damage = child:FindFirstChild("Damage")
-						if damage and damage:IsA("IntValue") then
-							damage.Value = math.random(dmgMin, dmgMax)
-						end
-					end)
-				end
-			end
-		end
-	end)
-end
-
 WeaponTab:CreateButton({
 	Name = 'Apply Hitbox Size',
 	Callback = function()
@@ -996,13 +934,37 @@ WeaponTab:CreateInput({
 	end,
 })
 
-WeaponTab:CreateToggle({
-	Name = 'Auto Apply Damage',
-	CurrentValue = false,
-	Callback = function(Value)
-		autoSpeedDamageEnabled = Value
-	end,
-})
+-- FIX: Chỉ apply damage khi click button, KHÔNG tự động
+local function applyAllDamageToWeapons()
+	pcall(function()
+		local character = LocalPlayer.Character
+		if character then
+			for _, child in ipairs(character:GetChildren()) do
+				if child:IsA("Tool") then
+					pcall(function()
+						local damage = child:FindFirstChild("Damage")
+						if damage and damage:IsA("IntValue") then
+							damage.Value = math.random(dmgMin, dmgMax)
+						end
+					end)
+				end
+			end
+		end
+		local backpack = LocalPlayer:FindFirstChild("Backpack")
+		if backpack then
+			for _, child in ipairs(backpack:GetChildren()) do
+				if child:IsA("Tool") then
+					pcall(function()
+						local damage = child:FindFirstChild("Damage")
+						if damage and damage:IsA("IntValue") then
+							damage.Value = math.random(dmgMin, dmgMax)
+						end
+					end)
+				end
+			end
+		end
+	end)
+end
 
 WeaponTab:CreateButton({
 	Name = 'Apply Damage',
@@ -1047,14 +1009,10 @@ WeaponTab:CreateToggle({
 	CurrentValue = false,
 	Callback = function(Value)
 		infiniteAttackSpeed = Value
-		if infiniteAttackSpeed then
-			setAttackSpeedValue(math.huge)
-		else
-			setAttackSpeedValue(attackSpeedValue)
-		end
 	end,
 })
 
+-- FIX: Chỉ apply attack speed khi click button, KHÔNG tự động
 WeaponTab:CreateButton({
 	Name = 'Apply Attack Speed',
 	Callback = function()
@@ -1065,31 +1023,12 @@ WeaponTab:CreateButton({
 		end
 		Rayfield:Notify({
 			Title = "Thành công!",
-			Content = "Đã áp dụng Attack Speed.",
+			Content = "Đã áp dụng Attack Speed: " .. (infiniteAttackSpeed and "Vô hạn" or attackSpeedValue),
 			Duration = 2,
 			Image = 4483362458,
 		})
 	end,
 })
-
--- FIX: Auto-apply speed and damage loop
-task.spawn(function()
-	while true do
-		task.wait(1)
-		if autoSpeedDamageEnabled then
-			pcall(function()
-				-- Auto apply damage
-				applyAllDamageToWeapons()
-				-- Auto apply attack speed
-				if infiniteAttackSpeed then
-					setAttackSpeedValue(math.huge)
-				else
-					setAttackSpeedValue(attackSpeedValue)
-				end
-			end)
-		end
-	end
-end)
 
 WeaponTab:CreateSection('Utilities')
 WeaponTab:CreateButton({
