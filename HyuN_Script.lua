@@ -13763,65 +13763,39 @@ do
         if not myHRP then return {}, myModel, myHRP end
         range = tonumber(range) or NEXO_STRONGEST_RAID_RANGE
 
-        local out, seen = {}, {}
+        local out, seen, coreMap = {}, {}, {}
         local myPos = myHRP.Position
 
-        local function getPart(m)
-            if not m then return nil end
-            return m:FindFirstChild("HumanoidRootPart")
-                or (m:IsA("Model") and m.PrimaryPart)
-                or m:FindFirstChildWhichIsA("BasePart", true)
-        end
-
-        local function add(m, isCore)
-            if not m or seen[m] or m == myModel then return end
-            if isPunchingBag(m) or nexoIsPetModel(m) then return end
-
-            local part = getPart(m)
-            if not part then return end
-
-            local hum = m:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health <= 0 then return end
-
-            local hpObj = m:FindFirstChild("Health", true)
-            local hp = hpObj and tonumber(hpObj.Value)
-            if hp and hp <= 0 then return end
-
-            if (part.Position - myPos).Magnitude > range then return end
-            if not onMyIsland(part.Position) then return end
-
-            seen[m] = true
-            out[#out + 1] = m
-        end
-
-        -- Normal raid NPCs / Gojo.
-        if NPCsF then
-            for _, m in ipairs(NPCsF:GetChildren()) do
-                add(m, false)
+        local function getPart(inst)
+            if not inst then return nil end
+            if inst:IsA("BasePart") then return inst end
+            if inst:IsA("Model") then
+                return inst:FindFirstChild("HumanoidRootPart")
+                    or inst.PrimaryPart
+                    or inst:FindFirstChildWhichIsA("BasePart", true)
             end
+            return inst:FindFirstChildWhichIsA("BasePart", true)
         end
 
-        -- Strongest phase-5 gravity cores are not guaranteed to be normal NPC
-        -- models with a Humanoid. Scan workspace for the raid's red/blue/orb/core
-        -- objects as well, then feed them through the same DamageCharacter path.
-        local function looksLikeStrongestCore(inst)
-            local n = string.lower(tostring(inst.Name or ""))
-            if not (string.find(n, "gravity", 1, true)
+        local function hasCoreName(inst)
+            local n = string.lower(tostring(inst and inst.Name or ""))
+            return string.find(n, "gravity", 1, true)
                 or string.find(n, "core", 1, true)
                 or string.find(n, "orb", 1, true)
                 or string.find(n, "hollowpurple", 1, true)
-                or string.find(n, "hollow_purple", 1, true)) then
-                return false
-            end
+                or string.find(n, "hollow_purple", 1, true)
+                or string.find(n, "placeholder", 1, true)
+                or (string.find(n, "red", 1, true) and string.find(n, "blue", 1, true))
+        end
 
-            -- Prefer explicit red/blue gravity-core naming; avoid unrelated map props.
-            local redblue = string.find(n, "red", 1, true) or string.find(n, "blue", 1, true)
-            local parent = inst.Parent
-            for _ = 1, 5 do
+        local function inStrongestHierarchy(inst)
+            local parent = inst and inst.Parent
+            for _ = 1, 8 do
                 if not parent then break end
                 local pn = string.lower(tostring(parent.Name or ""))
                 if string.find(pn, "strongest", 1, true)
                     or string.find(pn, "gojo", 1, true)
+                    or string.find(pn, "satoru", 1, true)
                     or string.find(pn, "raid", 1, true)
                     or string.find(pn, "hollow", 1, true)
                     or string.find(pn, "gravity", 1, true) then
@@ -13829,29 +13803,93 @@ do
                 end
                 parent = parent.Parent
             end
-            return redblue and (string.find(n, "orb", 1, true) or string.find(n, "core", 1, true))
+            return false
         end
 
+        local function looksLikeCore(inst)
+            if not inst then return false end
+            local n = string.lower(tostring(inst.Name or ""))
+            local named = string.find(n, "gravity", 1, true)
+                or string.find(n, "core", 1, true)
+                or string.find(n, "orb", 1, true)
+                or string.find(n, "hollowpurple", 1, true)
+                or string.find(n, "hollow_purple", 1, true)
+                or string.find(n, "placeholder", 1, true)
+            if not named then return false end
+
+            local redBlue = string.find(n, "red", 1, true) or string.find(n, "blue", 1, true)
+            return inStrongestHierarchy(inst) or redBlue ~= nil
+        end
+
+        local function add(m, isCore, bypassIsland)
+            if not m or seen[m] or m == myModel then return end
+            if isPunchingBag(m) or nexoIsPetModel(m) then return end
+
+            local part = getPart(m)
+            if not part then return end
+
+            local hum = m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") or nil
+            if hum and hum.Health <= 0 then return end
+
+            local hpObj = m:FindFirstChild("Health", true)
+            if hpObj and hpObj:IsA("NumberValue") and hpObj.Value <= 0 then return end
+            if hpObj and hpObj:IsA("IntValue") and hpObj.Value <= 0 then return end
+
+            if (part.Position - myPos).Magnitude > range then return end
+            if not bypassIsland and not onMyIsland(part.Position) then return end
+
+            seen[m] = true
+            if isCore then coreMap[m] = true end
+            out[#out + 1] = m
+        end
+
+        -- Always include normal NPC raid targets (Gojo included).
+        if NPCsF then
+            for _, m in ipairs(NPCsF:GetChildren()) do
+                add(m, false, false)
+            end
+        end
+
+        -- Phase-5 cores can be Models, nested Models, or a BasePart under a folder.
+        -- Resolve every matching object to its nearest useful Model so attackList()
+        -- receives the same target shape it normally expects.
         pcall(function()
             for _, inst in ipairs(workspace:GetDescendants()) do
-                if inst:IsA("Model") and looksLikeStrongestCore(inst) then
-                    add(inst, true)
+                if looksLikeCore(inst) then
+                    local target = inst
+                    if inst:IsA("BasePart") or not inst:IsA("Model") then
+                        local parentModel = inst:FindFirstAncestorOfClass("Model")
+                        target = parentModel or inst
+                    end
+                    if target:IsA("Model") then
+                        add(target, true, true)
+                    elseif target:IsA("BasePart") then
+                        local parentModel = target:FindFirstAncestorOfClass("Model")
+                        if parentModel then
+                            add(parentModel, true, true)
+                        end
+                    end
                 end
             end
         end)
 
+        -- Cores first, then Gojo, then any other raid NPC.
         table.sort(out, function(a, b)
             local function priority(m)
-                local n = string.lower(tostring(m.Name))
-                -- Phase-5 gravity cores MUST be handled before Gojo.
-                if string.find(n, "gravity", 1, true)
+                local n = string.lower(tostring(m and m.Name or ""))
+                if coreMap[m]
+                    or string.find(n, "gravity", 1, true)
                     or string.find(n, "core", 1, true)
                     or string.find(n, "orb", 1, true)
                     or string.find(n, "hollowpurple", 1, true)
-                    or string.find(n, "hollow_purple", 1, true) then return 0 end
+                    or string.find(n, "hollow_purple", 1, true) then
+                    return 0
+                end
                 if string.find(n, "gojo", 1, true)
                     or string.find(n, "satoru", 1, true)
-                    or string.find(n, "honored", 1, true) then return 1 end
+                    or string.find(n, "honored", 1, true) then
+                    return 1
+                end
                 return 2
             end
             local pa, pb = priority(a), priority(b)
@@ -13912,11 +13950,16 @@ do
                                     nexoStrongestRaidMoveToTarget(targets[1], hrp)
                                 end
 
-                                if os.clock() - NEXO_STRONGEST_RAID_LAST_ATTACK > 0.05 then
+                                -- Same fast damage cycle as Kill Near Aura: send the
+                                -- complete target list repeatedly, with Black Flash on
+                                -- alternating ticks. This is intentionally not a slow
+                                -- one-target raid attack loop.
+                                if os.clock() - NEXO_STRONGEST_RAID_LAST_ATTACK > math.max(0.02, LOOP_GAP * 0.6) then
                                     NEXO_STRONGEST_RAID_LAST_ATTACK = os.clock()
-                                    NexoQ(attackList, targets, mm, hrp)
+                                    NexoQ(pcall, attackList, targets, mm, hrp)
                                     if blackFlashList then
-                                        NexoQ(blackFlashList, targets, mm, hrp)
+                                        enableBlackFlash()
+                                        NexoQ(pcall, blackFlashList, targets, mm, hrp)
                                     end
                                 end
                             end
