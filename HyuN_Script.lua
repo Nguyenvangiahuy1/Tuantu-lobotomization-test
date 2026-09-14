@@ -13832,7 +13832,9 @@ do
             if not inst then return nil end
             if inst:IsA("BasePart") then return inst end
             if inst:IsA("Model") then
+                local hum = inst:FindFirstChildOfClass("Humanoid")
                 return inst:FindFirstChild("HumanoidRootPart")
+                    or (hum and hum.RootPart)
                     or inst.PrimaryPart
                     or inst:FindFirstChildWhichIsA("BasePart", true)
             end
@@ -13921,14 +13923,16 @@ do
                 local isPlaceholder = string.find(lname, "placeholder", 1, true) ~= nil
                 local isCoreName = looksLikeCore(inst)
                 if isPlaceholder or isCoreName then
+                    -- Keep the actual core/placeholder BasePart when possible.
+                    -- Previously this code promoted the part to its ancestor Model,
+                    -- which could be Gojo's Model and made the combat remote/movement
+                    -- accidentally lock onto Gojo instead of the real raid object.
                     local target = inst
-                    if inst:IsA("BasePart") or not inst:IsA("Model") then
+                    if not inst:IsA("BasePart") and not inst:IsA("Model") then
                         local parentModel = inst:FindFirstAncestorOfClass("Model")
                         target = parentModel or inst
                     end
-                    if target:IsA("Model") then
-                        add(target, true, true)
-                    elseif target:IsA("BasePart") then
+                    if target:IsA("Model") or target:IsA("BasePart") then
                         add(target, true, true)
                     end
                 end
@@ -13969,6 +13973,9 @@ do
         -- first Placeholder/core is hit. Only when no non-Gojo target remains do
         -- we return Gojo as the sole target.
         local function isGojoTarget(m)
+            -- A core/placeholder is a separate combat target even when it lives
+            -- under Gojo's Model.  coreMap therefore wins over the ancestor/name.
+            if coreMap[m] then return false end
             local n = string.lower(tostring(m and m.Name or ""))
             return string.find(n, "gojo", 1, true)
                 or string.find(n, "satoru", 1, true)
@@ -14000,13 +14007,30 @@ do
 
     local function nexoStrongestRaidMoveToTarget(target, hrp)
         if not target or not hrp then return end
-        local nh = target:FindFirstChild("HumanoidRootPart")
-        if not nh then return end
-        local goal = nh.Position - (nh.CFrame.LookVector * 5) + Vector3.new(0, 2, 0)
+
+        -- Accept both normal NPC Models and standalone raid-object BaseParts.
+        -- Strongest phase-5 objects are often not Humanoid rigs, so requiring
+        -- HumanoidRootPart here caused the player to keep moving toward Gojo.
+        local part = nil
+        if target:IsA("BasePart") then
+            part = target
+        elseif target:IsA("Model") then
+            local hum = target:FindFirstChildOfClass("Humanoid")
+            part = target:FindFirstChild("HumanoidRootPart")
+                or (hum and hum.RootPart)
+                or target.PrimaryPart
+                or target:FindFirstChildWhichIsA("BasePart", true)
+        else
+            part = target:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not part then return end
+
+        local look = part.CFrame.LookVector
+        local goal = part.Position - (look * 5) + Vector3.new(0, 2, 0)
         if (hrp.Position - goal).Magnitude <= 7 then return end
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(goal, nh.Position)
+            hrp.CFrame = CFrame.new(goal, part.Position)
         end)
     end
 
@@ -14050,9 +14074,18 @@ do
                                         or string.find(cn, "satoru", 1, true)
                                         or string.find(cn, "honored", 1, true)
                                     if not isGojo then
-                                        local cp = candidate and (candidate:FindFirstChild("HumanoidRootPart")
-                                            or (candidate:IsA("Model") and candidate.PrimaryPart)
-                                            or candidate:FindFirstChildWhichIsA("BasePart", true))
+                                        local cp = nil
+                                        if candidate and candidate:IsA("BasePart") then
+                                            cp = candidate
+                                        elseif candidate and candidate:IsA("Model") then
+                                            local ch = candidate:FindFirstChildOfClass("Humanoid")
+                                            cp = candidate:FindFirstChild("HumanoidRootPart")
+                                                or (ch and ch.RootPart)
+                                                or candidate.PrimaryPart
+                                                or candidate:FindFirstChildWhichIsA("BasePart", true)
+                                        elseif candidate then
+                                            cp = candidate:FindFirstChildWhichIsA("BasePart", true)
+                                        end
                                         if cp then
                                             local d = (hrp.Position - cp.Position).Magnitude
                                             if d < moveDist then
