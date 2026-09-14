@@ -14045,7 +14045,14 @@ do
                 if NEXO_STRONGEST_RAID_PREV_AGOJO == nil then
                     NEXO_STRONGEST_RAID_PREV_AGOJO = RaidCfg.active.AGojo == true
                 end
-                RaidCfg.active.AGojo = true
+                -- Do NOT leave the original AGojo combat engine running while
+                -- Strongest Auto is active. That engine has its own 0.05s loop
+                -- which teleports to Gojo and calls attackList({boss}), so it
+                -- competes with the custom Placeholder/Core target loop.
+                -- Strongest Auto will enable AGojo only when it needs the
+                -- queue/ready/retry machinery and disable it as soon as raid
+                -- targets are detected.
+                RaidCfg.active.AGojo = false
             end
 
             -- Also enable the existing damage-protection helper.
@@ -14060,6 +14067,16 @@ do
                         pcall(function()
                             local targets, mm, hrp = nexoStrongestRaidTargets(NEXO_STRONGEST_RAID_RANGE)
                             NEXO_STRONGEST_TARGETS = targets
+
+                            -- The legacy AGojo engine is used only as a queue/raid
+                            -- state machine. The moment any actual raid target is
+                            -- visible, disable that engine so its boss-combat loop
+                            -- cannot teleport us back to Gojo. When there are no
+                            -- targets (queue/loading/raid finished), temporarily
+                            -- enable it so it can create/retry the raid.
+                            if RaidCfg and RaidCfg.active then
+                                RaidCfg.active.AGojo = (#targets == 0)
+                            end
 
                             if #targets > 0 and mm and hrp then
                                 -- Movement target is resolved independently from the
