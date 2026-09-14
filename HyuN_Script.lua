@@ -2249,6 +2249,9 @@ end
 CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
     if NEXOG.NexoHubSession ~= SESSION then return end
     if not NEXO_LV.KillOn then return end
+    -- When Reach is enabled it owns TP/movement. Aura continues its normal
+    -- damage loop below, but must not overwrite Reach's CFrame.
+    if NEXO_LV.ReachOn then return end
     if anyBringActive() then return end
     if NEXO_LV.essenceBusy or NEXO_LV.crateBusy then return end
     local n, hrp = NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP
@@ -2543,40 +2546,116 @@ end)
 
  NEXO_LV.ReachOn = false
 
+-- Reach & Kill movement is intentionally independent from Kill Near Aura.
+-- Reach owns TELEPORT movement; Kill Near Aura owns DAMAGE. When both are ON,
+-- they cooperate instead of fighting over killAuraTarget/killAuraHRP.
 local reachTargets, reachHRP = {}, nil
+local reachCurrentTarget = nil
+local reachTargetStamp = 0
+
+local function nexoReachPart(target)
+    if not target then return nil end
+    if target:IsA("BasePart") then return target end
+    if target:IsA("Model") then
+        local hum = target:FindFirstChildOfClass("Humanoid")
+        return target:FindFirstChild("HumanoidRootPart")
+            or (hum and hum.RootPart)
+            or target.PrimaryPart
+            or target:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return target:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function nexoReachAlive(target)
+    if not target or not target.Parent then return false end
+    if target:IsA("Model") then
+        local hum = target:FindFirstChildOfClass("Humanoid")
+        if hum then return hum.Health > 0 end
+        local hp = target:FindFirstChild("Health", true)
+        if hp and (hp:IsA("NumberValue") or hp:IsA("IntValue")) then
+            return hp.Value > 0
+        end
+    end
+    return true
+end
+
+-- Reach movement gets a short exclusive movement window.  Aura still attacks,
+-- but its own movement heartbeat must stay out of the way while Reach is ON.
 CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
     if NEXOG.NexoHubSession ~= SESSION then return end
     if not NEXO_LV.ReachOn then return end
+
     local hrp = reachHRP
-    if not (hrp and hrp.Parent) then return end
-    local far, fd
-    for _, m in ipairs(reachTargets) do
-        if m.Parent then
-            local h = m:FindFirstChild("HumanoidRootPart")
-            if h then
-                local d = (h.Position - hrp.Position).Magnitude
-                if d > 12 and (not fd or d < fd) then far, fd = h, d end
-            end
-        end
+    local target = reachCurrentTarget
+    if not (hrp and hrp.Parent and target and target.Parent and nexoReachAlive(target)) then return end
+
+    local part = nexoReachPart(target)
+    if not part then return end
+
+    local goal
+    pcall(function() goal = auraGoal(part) end)
+    if not goal then
+        goal = CFrame.new(part.Position + Vector3.new(0, 2, 0), part.Position)
     end
-    if far then
-        local goal = auraGoal(far)
-        pcall(function()
+
+    pcall(function()
+        if (hrp.Position - goal.Position).Magnitude > 4 then
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.CFrame = goal
-        end)
-    end
+        end
+    end)
 end)
+
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
         if NEXO_LV.ReachOn then
-            local targets, mm, hrp = NEXO_LV.collectAllNPCs()
+            local targets, mm, hrp = {}, nil, nil
+
+            -- Use the original Reach target source: all normal NPCs, including
+            -- Gojo.  Reach is a movement feature, not the Aura damage resolver.
+            pcall(function()
+                targets, mm, hrp = NEXO_LV.collectAllNPCs()
+            end)
+
             reachTargets, reachHRP = targets or {}, hrp
-            if hrp and #targets > 0 then
-                NexoQ(pcall, attackList, targets, mm, hrp)
+
+            local chosen = nil
+            if hrp then
+                -- Keep the current target until it disappears/dies. This stops
+                -- Reach from rapidly bouncing between Gojo and another NPC.
+                if reachCurrentTarget and reachCurrentTarget.Parent and nexoReachAlive(reachCurrentTarget) then
+                    chosen = reachCurrentTarget
+                else
+                    local best, bestDist
+                    for _, m in ipairs(reachTargets) do
+                        if m and m.Parent and nexoReachAlive(m) then
+                            local part = nexoReachPart(m)
+                            if part then
+                                local d = (part.Position - hrp.Position).Magnitude
+                                if not bestDist or d < bestDist then
+                                    best, bestDist = m, d
+                                end
+                            end
+                        end
+                    end
+                    chosen = best
+                end
+            end
+
+            if chosen then
+                if chosen ~= reachCurrentTarget then
+                    reachTargetStamp = os.clock()
+                end
+                reachCurrentTarget = chosen
+
+                -- DO NOT touch NEXO_LV.killAuraTarget here.  Kill Near Aura must
+                -- keep its own damage target and list when both features are ON.
+            else
+                reachCurrentTarget = nil
             end
         else
             reachTargets, reachHRP = {}, nil
+            reachCurrentTarget = nil
         end
         task.wait(math.max(0.02, LOOP_GAP * 0.6))
     end
