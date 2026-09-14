@@ -13813,6 +13813,8 @@ do
     -- queue / ready / island handling / retry, while this loop attacks every
     -- valid NPC in range instead of only the nearest target.
     NEXO_STRONGEST_RAID_ON = NEXO_STRONGEST_RAID_ON or false
+NEXO_STRONGEST_RAID_COMBAT_LOCK = NEXO_STRONGEST_RAID_COMBAT_LOCK or false
+NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
     NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 9999
     NEXO_STRONGEST_RAID_LOOP = nil
     NEXO_STRONGEST_RAID_PREV_AGOJO = nil
@@ -13887,7 +13889,11 @@ do
 
         local function add(m, isCore, bypassIsland)
             if not m or seen[m] or m == myModel then return end
-            if isPunchingBag(m) or nexoIsPetModel(m) then return end
+            -- Explicit Strongest phase objects must never be filtered as normal NPCs.
+            -- They can be BaseParts/Folders rather than Humanoid models.
+            if not isCore then
+                if isPunchingBag(m) or nexoIsPetModel(m) then return end
+            end
 
             local part = getPart(m)
             if not part then return end
@@ -13919,23 +13925,24 @@ do
         -- receives the same target shape it normally expects.
         pcall(function()
             for _, inst in ipairs(workspace:GetDescendants()) do
-                local lname = string.lower(tostring(inst.Name or ""))
-                local isPlaceholder = string.find(lname, "placeholder", 1, true) ~= nil
-                local isCoreName = looksLikeCore(inst)
-                if isPlaceholder or isCoreName then
-                    -- Keep the actual core/placeholder BasePart when possible.
-                    -- Previously this code promoted the part to its ancestor Model,
-                    -- which could be Gojo's Model and made the combat remote/movement
-                    -- accidentally lock onto Gojo instead of the real raid object.
-                    local target = inst
-                    if not inst:IsA("BasePart") and not inst:IsA("Model") then
-                        local parentModel = inst:FindFirstAncestorOfClass("Model")
-                        target = parentModel or inst
+                -- One malformed/unsupported Instance must not abort the entire scan.
+                -- The previous outer pcall stopped at the first exception, which could
+                -- leave only one Placeholder visible to the combat loop.
+                pcall(function()
+                    local lname = string.lower(tostring(inst.Name or ""))
+                    local isPlaceholder = string.find(lname, "placeholder", 1, true) ~= nil
+                    local isCoreName = looksLikeCore(inst)
+                    if isPlaceholder or isCoreName then
+                        local target = inst
+                        if not inst:IsA("BasePart") and not inst:IsA("Model") then
+                            local parentModel = inst:FindFirstAncestorOfClass("Model")
+                            target = parentModel or inst
+                        end
+                        if target:IsA("Model") or target:IsA("BasePart") then
+                            add(target, true, true)
+                        end
                     end
-                    if target:IsA("Model") or target:IsA("BasePart") then
-                        add(target, true, true)
-                    end
-                end
+                end)
             end
         end)
 
@@ -14037,6 +14044,10 @@ do
     function NexoStrongestRaidSet(on)
         on = on and true or false
         NEXO_STRONGEST_RAID_ON = on
+        if not on then
+            NEXO_STRONGEST_RAID_COMBAT_LOCK = false
+            NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
+        end
 
         if on then
             -- The existing raid engine already knows how to queue, move onto
@@ -14074,8 +14085,16 @@ do
                             -- cannot teleport us back to Gojo. When there are no
                             -- targets (queue/loading/raid finished), temporarily
                             -- enable it so it can create/retry the raid.
+                            if #targets > 0 then
+                                -- Once the raid has produced ANY real combat target,
+                                -- permanently lock out the legacy Gojo combat engine
+                                -- for this Strongest session.  Otherwise a brief scan
+                                -- miss between Placeholder spawns can re-enable AGojo
+                                -- and its own teleport-to-Gojo loop.
+                                NEXO_STRONGEST_RAID_COMBAT_LOCK = true
+                            end
                             if RaidCfg and RaidCfg.active then
-                                RaidCfg.active.AGojo = (#targets == 0)
+                                RaidCfg.active.AGojo = not NEXO_STRONGEST_RAID_COMBAT_LOCK
                             end
 
                             if #targets > 0 and mm and hrp then
@@ -14083,57 +14102,75 @@ do
                                 -- damage list.  Gojo must NEVER be used as the
                                 -- movement/lock-on target while any non-Gojo target
                                 -- is still alive/in range.
+                                -- Select ONE real combat object at a time.  Never pass
+                                -- the whole mixed list to attackList(), because that can
+                                -- let a boss/ancestor model become the first target while
+                                -- a raid core is still alive.
                                 local moveTarget = nil
-                                local moveDist = math.huge
+                                local movePart = nil
+
+                                local function targetPart(candidate)
+                                    if not candidate then return nil end
+                                    if candidate:IsA("BasePart") then return candidate end
+                                    if candidate:IsA("Model") then
+                                        local ch = candidate:FindFirstChildOfClass("Humanoid")
+                                        return candidate:FindFirstChild("HumanoidRootPart")
+                                            or (ch and ch.RootPart)
+                                            or candidate.PrimaryPart
+                                            or candidate:FindFirstChildWhichIsA("BasePart", true)
+                                    end
+                                    return candidate:FindFirstChildWhichIsA("BasePart", true)
+                                end
+
+                                local function isGojoName(candidate)
+                                    local n = string.lower(tostring(candidate and candidate.Name or ""))
+                                    return string.find(n, "gojo", 1, true)
+                                        or string.find(n, "satoru", 1, true)
+                                        or string.find(n, "honored", 1, true)
+                                end
+
+                                -- nexoStrongestRaidTargets() deliberately sorts cores before
+                                -- Gojo.  Keep that order here: first core/object, then the
+                                -- next core after it disappears. Do NOT choose nearest NPC.
                                 for _, candidate in ipairs(targets) do
-                                    local cn = string.lower(tostring(candidate and candidate.Name or ""))
-                                    local isGojo = string.find(cn, "gojo", 1, true)
-                                        or string.find(cn, "satoru", 1, true)
-                                        or string.find(cn, "honored", 1, true)
-                                    if not isGojo then
-                                        local cp = nil
-                                        if candidate and candidate:IsA("BasePart") then
-                                            cp = candidate
-                                        elseif candidate and candidate:IsA("Model") then
-                                            local ch = candidate:FindFirstChildOfClass("Humanoid")
-                                            cp = candidate:FindFirstChild("HumanoidRootPart")
-                                                or (ch and ch.RootPart)
-                                                or candidate.PrimaryPart
-                                                or candidate:FindFirstChildWhichIsA("BasePart", true)
-                                        elseif candidate then
-                                            cp = candidate:FindFirstChildWhichIsA("BasePart", true)
-                                        end
+                                    if not isGojoName(candidate) then
+                                        local cp = targetPart(candidate)
                                         if cp then
-                                            local d = (hrp.Position - cp.Position).Magnitude
-                                            if d < moveDist then
-                                                moveDist = d
-                                                moveTarget = candidate
-                                            end
+                                            moveTarget = candidate
+                                            movePart = cp
+                                            break
                                         end
                                     end
                                 end
-                                -- If no non-Gojo target remains, the resolver has
-                                -- intentionally returned Gojo-only, so Gojo may now
-                                -- become the movement target.
+
                                 if not moveTarget then
+                                    -- Only a Gojo-only list can reach this branch.
                                     moveTarget = targets[1]
+                                    movePart = targetPart(moveTarget)
                                 end
 
-                                if os.clock() - NEXO_STRONGEST_RAID_LAST_MOVE > 0.12 then
+                                NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
+
+                                if movePart and os.clock() - NEXO_STRONGEST_RAID_LAST_MOVE > 0.06 then
                                     NEXO_STRONGEST_RAID_LAST_MOVE = os.clock()
-                                    nexoStrongestRaidMoveToTarget(moveTarget, hrp)
+                                    local goal = movePart.Position - (movePart.CFrame.LookVector * 5) + Vector3.new(0, 2, 0)
+                                    if (hrp.Position - goal).Magnitude > 5 then
+                                        pcall(function()
+                                            hrp.AssemblyLinearVelocity = Vector3.zero
+                                            hrp.CFrame = CFrame.new(goal, movePart.Position)
+                                        end)
+                                    end
                                 end
 
-                                -- Same fast damage cycle as Kill Near Aura: send the
-                                -- complete target list repeatedly, with Black Flash on
-                                -- alternating ticks. This is intentionally not a slow
-                                -- one-target raid attack loop.
-                                if os.clock() - NEXO_STRONGEST_RAID_LAST_ATTACK > math.max(0.02, LOOP_GAP * 0.6) then
+                                if moveTarget and os.clock() - NEXO_STRONGEST_RAID_LAST_ATTACK > math.max(0.02, LOOP_GAP * 0.4) then
                                     NEXO_STRONGEST_RAID_LAST_ATTACK = os.clock()
-                                    NexoQ(pcall, attackList, targets, mm, hrp)
+                                    -- Attack ONLY the currently selected core/object.
+                                    -- This makes the loop: core #1 -> core #2 -> ... -> Gojo.
+                                    local oneTarget = { moveTarget }
+                                    NexoQ(pcall, attackList, oneTarget, mm, hrp)
                                     if blackFlashList then
                                         enableBlackFlash()
-                                        NexoQ(pcall, blackFlashList, targets, mm, hrp)
+                                        NexoQ(pcall, blackFlashList, oneTarget, mm, hrp)
                                     end
                                 end
                             end
@@ -14147,6 +14184,8 @@ do
             end)
         else
             NEXO_STRONGEST_TARGETS = {}
+            NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
+            NEXO_STRONGEST_RAID_COMBAT_LOCK = false
             pcall(function() NexoStrongestSet(false) end)
             if RaidCfg and RaidCfg.active then
                 if NEXO_STRONGEST_RAID_PREV_AGOJO ~= nil then
