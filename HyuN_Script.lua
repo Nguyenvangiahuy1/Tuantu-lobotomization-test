@@ -13751,7 +13751,7 @@ do
     -- queue / ready / island handling / retry, while this loop attacks every
     -- valid NPC in range instead of only the nearest target.
     NEXO_STRONGEST_RAID_ON = NEXO_STRONGEST_RAID_ON or false
-    NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 1200
+    NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 5000
     NEXO_STRONGEST_RAID_LOOP = nil
     NEXO_STRONGEST_RAID_PREV_AGOJO = nil
     NEXO_STRONGEST_RAID_LAST_ATTACK = 0
@@ -13855,7 +13855,10 @@ do
         -- receives the same target shape it normally expects.
         pcall(function()
             for _, inst in ipairs(workspace:GetDescendants()) do
-                if looksLikeCore(inst) then
+                local lname = string.lower(tostring(inst.Name or ""))
+                local isPlaceholder = string.find(lname, "placeholder", 1, true) ~= nil
+                local isCoreName = looksLikeCore(inst)
+                if isPlaceholder or isCoreName then
                     local target = inst
                     if inst:IsA("BasePart") or not inst:IsA("Model") then
                         local parentModel = inst:FindFirstAncestorOfClass("Model")
@@ -13864,10 +13867,7 @@ do
                     if target:IsA("Model") then
                         add(target, true, true)
                     elseif target:IsA("BasePart") then
-                        local parentModel = target:FindFirstAncestorOfClass("Model")
-                        if parentModel then
-                            add(parentModel, true, true)
-                        end
+                        add(target, true, true)
                     end
                 end
             end
@@ -13881,6 +13881,7 @@ do
                     or string.find(n, "gravity", 1, true)
                     or string.find(n, "core", 1, true)
                     or string.find(n, "orb", 1, true)
+                    or string.find(n, "placeholder", 1, true)
                     or string.find(n, "hollowpurple", 1, true)
                     or string.find(n, "hollow_purple", 1, true) then
                     return 0
