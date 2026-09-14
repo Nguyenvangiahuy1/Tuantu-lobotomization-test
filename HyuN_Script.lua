@@ -13820,6 +13820,9 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
     NEXO_STRONGEST_RAID_PREV_AGOJO = nil
     NEXO_STRONGEST_RAID_LAST_ATTACK = 0
     NEXO_STRONGEST_RAID_LAST_MOVE = 0
+    NEXO_STRONGEST_RAID_LAST_TARGET = nil
+    NEXO_STRONGEST_RAID_TARGET_SINCE = 0
+    NEXO_STRONGEST_RAID_SEEN_GOJO = false
 
     local function nexoStrongestRaidTargets(range)
         local myModel = getModel()
@@ -13843,149 +13846,151 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
             return inst:FindFirstChildWhichIsA("BasePart", true)
         end
 
-        local function hasCoreName(inst)
+        local function isGojoName(inst)
+            local n = string.lower(tostring(inst and inst.Name or ""))
+            return string.find(n, "gojo", 1, true)
+                or string.find(n, "satoru", 1, true)
+                or string.find(n, "honored", 1, true)
+        end
+
+        local gojoModel, gojoHum
+        if NPCsF then
+            for _, m in ipairs(NPCsF:GetChildren()) do
+                if isGojoName(m) then
+                    gojoModel = m
+                    gojoHum = m:FindFirstChildOfClass("Humanoid")
+                    break
+                end
+            end
+        end
+
+        -- Phase 5 is the ONLY phase where the extra Gravity/Placeholder/Hollow Purple
+        -- objects should become combat targets.  Earlier versions scanned all of
+        -- Workspace and found unrelated/future/visual objects during phase 1,
+        -- causing Auto Strongest to ignore Gojo from the start.
+        local gojoMax = gojoHum and gojoHum.MaxHealth or 0
+        local gojoHp = gojoHum and gojoHum.Health or 0
+        local gojoRatio = (gojoHum and gojoMax > 0) and (gojoHp / gojoMax) or 1
+
+        -- Phase gate: first see/attack Gojo normally. Only allow Phase-5 objects
+        -- after Gojo has actually been present as a normal raid boss and has dropped
+        -- to the documented ~35%% threshold. This prevents stray Placeholder/Core
+        -- visuals from stealing the target during phases 1-4.
+        if gojoModel and gojoHum and gojoMax > 0 and gojoHp > 0 and gojoRatio > 0.35 then
+            NEXO_STRONGEST_RAID_SEEN_GOJO = true
+        end
+        local phase5 = (NEXO_STRONGEST_RAID_SEEN_GOJO == true)
+            and (gojoHum and gojoMax > 0 and gojoHp > 0 and gojoRatio <= 0.35)
+            or false
+        NEXO_STRONGEST_PHASE5 = phase5
+
+        local function coreName(inst)
             local n = string.lower(tostring(inst and inst.Name or ""))
             return string.find(n, "gravity", 1, true)
-                or string.find(n, "core", 1, true)
-                or string.find(n, "orb", 1, true)
+                or string.find(n, "placeholder", 1, true)
                 or string.find(n, "hollowpurple", 1, true)
                 or string.find(n, "hollow_purple", 1, true)
-                or string.find(n, "placeholder", 1, true)
-                or (string.find(n, "red", 1, true) and string.find(n, "blue", 1, true))
-        end
-
-        local function inStrongestHierarchy(inst)
-            local parent = inst and inst.Parent
-            for _ = 1, 8 do
-                if not parent then break end
-                local pn = string.lower(tostring(parent.Name or ""))
-                if string.find(pn, "strongest", 1, true)
-                    or string.find(pn, "gojo", 1, true)
-                    or string.find(pn, "satoru", 1, true)
-                    or string.find(pn, "raid", 1, true)
-                    or string.find(pn, "hollow", 1, true)
-                    or string.find(pn, "gravity", 1, true) then
-                    return true
-                end
-                parent = parent.Parent
-            end
-            return false
-        end
-
-        local function looksLikeCore(inst)
-            if not inst then return false end
-            local n = string.lower(tostring(inst.Name or ""))
-            local named = string.find(n, "gravity", 1, true)
-                or string.find(n, "core", 1, true)
-                or string.find(n, "orb", 1, true)
-                or string.find(n, "hollowpurple", 1, true)
-                or string.find(n, "hollow_purple", 1, true)
-                or string.find(n, "placeholder", 1, true)
-            if not named then return false end
-
-            local redBlue = string.find(n, "red", 1, true) or string.find(n, "blue", 1, true)
-            return inStrongestHierarchy(inst) or redBlue ~= nil
+                or string.find(n, "purplecore", 1, true)
         end
 
         local function add(m, isCore, bypassIsland)
             if not m or seen[m] or m == myModel then return end
-            -- Explicit Strongest phase objects must never be filtered as normal NPCs.
-            -- They can be BaseParts/Folders rather than Humanoid models.
+            local part = getPart(m)
+            if not part then return end
             if not isCore then
                 if isPunchingBag(m) or nexoIsPetModel(m) then return end
             end
-
-            local part = getPart(m)
-            if not part then return end
-
             local hum = m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") or nil
             if hum and hum.Health <= 0 then return end
-
             local hpObj = m:FindFirstChild("Health", true)
-            if hpObj and hpObj:IsA("NumberValue") and hpObj.Value <= 0 then return end
-            if hpObj and hpObj:IsA("IntValue") and hpObj.Value <= 0 then return end
-
+            if hpObj and (hpObj:IsA("NumberValue") or hpObj:IsA("IntValue")) and hpObj.Value <= 0 then return end
             if (part.Position - myPos).Magnitude > range then return end
             if not bypassIsland and not onMyIsland(part.Position) then return end
-
             seen[m] = true
             if isCore then coreMap[m] = true end
             out[#out + 1] = m
         end
 
-        -- Always include normal NPC raid targets (Gojo included).
+        -- Normal raid NPCs. During phases 1-4, Strongest should fight Gojo first/only.
         if NPCsF then
             for _, m in ipairs(NPCsF:GetChildren()) do
                 add(m, false, false)
             end
         end
 
-        -- Phase-5 cores can be Models, nested Models, or BaseParts under folders.
-        -- Keep the actual core object; NEVER resolve upward to a Gojo ancestor.
-        pcall(function()
-            for _, inst in ipairs(workspace:GetDescendants()) do
-                -- One malformed/unsupported Instance must not abort the entire scan.
-                -- The previous outer pcall stopped at the first exception, which could
-                -- leave only one Placeholder visible to the combat loop.
-                pcall(function()
-                    local lname = string.lower(tostring(inst.Name or ""))
-                    local isPlaceholder = string.find(lname, "placeholder", 1, true) ~= nil
-                    local isCoreName = looksLikeCore(inst)
-                    if isPlaceholder or isCoreName then
-                        -- IMPORTANT: never promote a raid core to its ANCESTOR Model.
-                        -- In phase 5 the Placeholder/Core can live inside Gojo's Model;
-                        -- promoting it to that ancestor collapses every core into Gojo and
-                        -- makes the next scan believe there is no separate core left.
-                        local target = nil
-                        if inst:IsA("BasePart") or inst:IsA("Model") then
-                            target = inst
-                        else
-                            -- Prefer a descendant Model/part belonging to the named core,
-                            -- never an ancestor. This keeps each Placeholder independent.
-                            local bestModel, bestPart
-                            pcall(function()
+        if phase5 then
+            -- Only scan explicit Phase-5 combat-object names. Do not promote folders
+            -- to ancestor Models; a core nested under Gojo remains its own target.
+            pcall(function()
+                for _, inst in ipairs(workspace:GetDescendants()) do
+                    pcall(function()
+                        if coreName(inst) then
+                            local target
+                            if inst:IsA("BasePart") or inst:IsA("Model") then
+                                target = inst
+                            else
+                                -- Pick a descendant part/model, never an ancestor Gojo.
                                 for _, d in ipairs(inst:GetDescendants()) do
-                                    if d:IsA("Model") then
-                                        local dn = string.lower(tostring(d.Name or ""))
-                                        local isBossName = string.find(dn, "gojo", 1, true)
-                                            or string.find(dn, "satoru", 1, true)
-                                            or string.find(dn, "honored", 1, true)
-                                        if not isBossName and not bestModel then
-                                            bestModel = d
-                                        end
-                                    elseif d:IsA("BasePart") and not bestPart then
-                                        bestPart = d
+                                    if d:IsA("Model") and not isGojoName(d) then
+                                        target = d
+                                        break
                                     end
                                 end
-                            end)
-                            target = bestModel or bestPart
+                                if not target then
+                                    for _, d in ipairs(inst:GetDescendants()) do
+                                        if d:IsA("BasePart") then target = d; break end
+                                    end
+                                end
+                            end
+                            if target and (target:IsA("Model") or target:IsA("BasePart")) then
+                                add(target, true, true)
+                            end
                         end
-                        if target and (target:IsA("Model") or target:IsA("BasePart")) then
-                            add(target, true, true)
-                        end
-                    end
-                end)
-            end
-        end)
+                    end)
+                end
+            end)
+        end
 
-        -- Cores first, then Gojo, then any other raid NPC.
+        -- Drop dead/inactive phase-5 objects from the combat list. Some raid objects
+        -- keep their Model/Folder after destruction, so checking only Parent is not enough.
+        local function targetHealthAlive(m)
+            if not m then return false end
+            local hum = m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") or nil
+            if hum then return hum.Health > 0 end
+            for _, key in ipairs({"Health", "HP", "HitPoints", "Hitpoint", "CurrentHealth"}) do
+                local ok, v = pcall(function() return m:GetAttribute(key) end)
+                if ok and type(v) == "number" then return v > 0 end
+                local obj = m:FindFirstChild(key, true)
+                if obj and (obj:IsA("NumberValue") or obj:IsA("IntValue")) then return obj.Value > 0 end
+            end
+            local dead = false
+            pcall(function() dead = m:GetAttribute("Dead") == true or m:GetAttribute("Destroyed") == true end)
+            if dead then return false end
+            return m.Parent ~= nil
+        end
+
+        local aliveOut = {}
+        for _, m in ipairs(out) do
+            if targetHealthAlive(m) then aliveOut[#aliveOut + 1] = m end
+        end
+        out = aliveOut
+
+        -- Deduplicate targets sharing the same physical combat part. This prevents
+        -- one Placeholder from appearing multiple times through nested descendants.
+        local unique, usedPart = {}, {}
+        for _, m in ipairs(out) do
+            local part = getPart(m)
+            if part and not usedPart[part] then
+                usedPart[part] = true
+                unique[#unique + 1] = m
+            end
+        end
+        out = unique
+
         table.sort(out, function(a, b)
             local function priority(m)
-                local n = string.lower(tostring(m and m.Name or ""))
-                if coreMap[m]
-                    or string.find(n, "gravity", 1, true)
-                    or string.find(n, "core", 1, true)
-                    or string.find(n, "orb", 1, true)
-                    or string.find(n, "placeholder", 1, true)
-                    or string.find(n, "hollowpurple", 1, true)
-                    or string.find(n, "hollow_purple", 1, true) then
-                    return 0
-                end
-                if string.find(n, "gojo", 1, true)
-                    or string.find(n, "satoru", 1, true)
-                    or string.find(n, "honored", 1, true) then
-                    return 1
-                end
+                if phase5 and coreMap[m] then return 0 end
+                if isGojoName(m) then return 1 end
                 return 2
             end
             local pa, pb = priority(a), priority(b)
@@ -13996,48 +14001,23 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
             return (ah.Position - myPos).Magnitude < (bh.Position - myPos).Magnitude
         end)
 
-        -- IMPORTANT: Gojo is a fallback target only. If ANY other attackable
-        -- object/NPC/core exists in range, remove Gojo from the active attack list.
-        -- This prevents the combat remote from locking back onto Gojo after the
-        -- first Placeholder/core is hit. Only when no non-Gojo target remains do
-        -- we return Gojo as the sole target.
-        local function isGojoTarget(m)
-            -- A core/placeholder is a separate combat target even when it lives
-            -- under Gojo's Model.  coreMap therefore wins over the ancestor/name.
-            if coreMap[m] then return false end
-            local n = string.lower(tostring(m and m.Name or ""))
-            -- A phase-5 object may be nested under Gojo, but its own identity wins.
-            if string.find(n, "placeholder", 1, true)
-                or string.find(n, "gravity", 1, true)
-                or string.find(n, "core", 1, true)
-                or string.find(n, "orb", 1, true)
-                or string.find(n, "hollowpurple", 1, true)
-                or string.find(n, "hollow_purple", 1, true) then
-                return false
+        -- Before phase 5: ALWAYS prioritize Gojo and ignore incidental extra objects.
+        if not phase5 then
+            local onlyGojo = {}
+            for _, m in ipairs(out) do
+                if isGojoName(m) then onlyGojo[#onlyGojo + 1] = m end
             end
-            return string.find(n, "gojo", 1, true)
-                or string.find(n, "satoru", 1, true)
-                or string.find(n, "honored", 1, true)
-        end
-
-        local nonGojo = {}
-        local gojo = {}
-        for _, m in ipairs(out) do
-            if isGojoTarget(m) then
-                gojo[#gojo + 1] = m
-            else
-                nonGojo[#nonGojo + 1] = m
-            end
-        end
-
-        if #nonGojo > 0 then
-            -- Do NOT include Gojo at all while another attackable target exists.
-            out = nonGojo
-        elseif #gojo > 0 then
-            -- All other attackable targets are gone: Gojo becomes the only target.
-            out = gojo
+            if #onlyGojo > 0 then out = onlyGojo else out = {} end
         else
-            out = {}
+            -- Phase 5: cores first. Gojo only after every core/object disappears.
+            local cores, bosses = {}, {}
+            for _, m in ipairs(out) do
+                if coreMap[m] then cores[#cores + 1] = m
+                elseif isGojoName(m) then bosses[#bosses + 1] = m end
+            end
+            if #cores > 0 then out = cores
+            elseif #bosses > 0 then out = bosses
+            else out = {} end
         end
 
         return out, myModel, myHRP
@@ -14160,24 +14140,80 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
                                         or string.find(n, "honored", 1, true)
                                 end
 
-                                -- nexoStrongestRaidTargets() deliberately sorts cores before
-                                -- Gojo.  Keep that order here: first core/object, then the
-                                -- next core after it disappears. Do NOT choose nearest NPC.
-                                for _, candidate in ipairs(targets) do
-                                    if not isGojoName(candidate) then
-                                        local cp = targetPart(candidate)
-                                        if cp then
-                                            moveTarget = candidate
-                                            movePart = cp
-                                            break
-                                        end
+                                -- Keep the current core while it is alive. If it has
+                                -- vanished/been destroyed, immediately advance. If the
+                                -- object remains as a dead visual shell for a while,
+                                -- rotate to the next distinct core instead of getting stuck.
+                                local current = NEXO_STRONGEST_RAID_CURRENT_TARGET
+                                local nowTarget = os.clock()
+                                local function isSame(a, b)
+                                    return a ~= nil and b ~= nil and a == b
+                                end
+                                local function aliveCandidate(candidate)
+                                    if not candidate or not candidate.Parent then return false end
+                                    local h = candidate:IsA("Model") and candidate:FindFirstChildOfClass("Humanoid") or nil
+                                    if h and h.Health <= 0 then return false end
+                                    for _, key in ipairs({"Health", "HP", "HitPoints", "CurrentHealth"}) do
+                                        local av = candidate:GetAttribute(key)
+                                        if type(av) == "number" and av <= 0 then return false end
+                                        local obj = candidate:FindFirstChild(key, true)
+                                        if obj and (obj:IsA("NumberValue") or obj:IsA("IntValue")) and obj.Value <= 0 then return false end
                                     end
+                                    return true
                                 end
 
-                                if not moveTarget then
-                                    -- Only a Gojo-only list can reach this branch.
+                                -- Phase 1-4: targets is Gojo-only, so don't use the stale
+                                -- core selection state from a previous phase.
+                                if not NEXO_STRONGEST_PHASE5 then
                                     moveTarget = targets[1]
                                     movePart = targetPart(moveTarget)
+                                    NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
+                                    NEXO_STRONGEST_RAID_LAST_TARGET = moveTarget
+                                    NEXO_STRONGEST_RAID_TARGET_SINCE = nowTarget
+                                else
+                                    -- First try to retain the current live core.
+                                    if aliveCandidate(current) then
+                                        local cp = targetPart(current)
+                                        if cp then
+                                            moveTarget = current
+                                            movePart = cp
+                                        end
+                                    end
+
+                                    -- If no current target, select the first core.
+                                    if not moveTarget then
+                                        for _, candidate in ipairs(targets) do
+                                            if not isGojoName(candidate) then
+                                                local cp = targetPart(candidate)
+                                                if cp then moveTarget, movePart = candidate, cp; break end
+                                            end
+                                        end
+                                    end
+
+                                    -- If the selected core is stale for too long while other
+                                    -- distinct cores exist, rotate to the next core. This is
+                                    -- specifically to handle Phase-5 visual shells that remain
+                                    -- in Workspace after their real hitbox is gone.
+                                    if moveTarget and nowTarget - (NEXO_STRONGEST_RAID_TARGET_SINCE or nowTarget) > 1.25 then
+                                        local alternate
+                                        for _, candidate in ipairs(targets) do
+                                            if not isGojoName(candidate) and not isSame(candidate, moveTarget) then
+                                                local cp = targetPart(candidate)
+                                                if cp then alternate = candidate; break end
+                                            end
+                                        end
+                                        if alternate then
+                                            moveTarget = alternate
+                                            movePart = targetPart(alternate)
+                                            NEXO_STRONGEST_RAID_CURRENT_TARGET = alternate
+                                            NEXO_STRONGEST_RAID_TARGET_SINCE = nowTarget
+                                        end
+                                    end
+
+                                    if moveTarget ~= NEXO_STRONGEST_RAID_CURRENT_TARGET then
+                                        NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
+                                        NEXO_STRONGEST_RAID_TARGET_SINCE = nowTarget
+                                    end
                                 end
 
                                 NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
