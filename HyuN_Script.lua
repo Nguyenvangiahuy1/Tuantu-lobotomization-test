@@ -13751,7 +13751,7 @@ do
     -- queue / ready / island handling / retry, while this loop attacks every
     -- valid NPC in range instead of only the nearest target.
     NEXO_STRONGEST_RAID_ON = NEXO_STRONGEST_RAID_ON or false
-    NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 5000
+    NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 9999
     NEXO_STRONGEST_RAID_LOOP = nil
     NEXO_STRONGEST_RAID_PREV_AGOJO = nil
     NEXO_STRONGEST_RAID_LAST_ATTACK = 0
@@ -13761,7 +13761,7 @@ do
         local myModel = getModel()
         local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
         if not myHRP then return {}, myModel, myHRP end
-        range = tonumber(range) or NEXO_STRONGEST_RAID_RANGE
+        range = tonumber(range) or 9999
 
         local out, seen, coreMap = {}, {}, {}
         local myPos = myHRP.Position
@@ -13901,6 +13901,38 @@ do
             return (ah.Position - myPos).Magnitude < (bh.Position - myPos).Magnitude
         end)
 
+        -- IMPORTANT: Gojo is a fallback target only. If ANY other attackable
+        -- object/NPC/core exists in range, remove Gojo from the active attack list.
+        -- This prevents the combat remote from locking back onto Gojo after the
+        -- first Placeholder/core is hit. Only when no non-Gojo target remains do
+        -- we return Gojo as the sole target.
+        local function isGojoTarget(m)
+            local n = string.lower(tostring(m and m.Name or ""))
+            return string.find(n, "gojo", 1, true)
+                or string.find(n, "satoru", 1, true)
+                or string.find(n, "honored", 1, true)
+        end
+
+        local nonGojo = {}
+        local gojo = {}
+        for _, m in ipairs(out) do
+            if isGojoTarget(m) then
+                gojo[#gojo + 1] = m
+            else
+                nonGojo[#nonGojo + 1] = m
+            end
+        end
+
+        if #nonGojo > 0 then
+            -- Do NOT include Gojo at all while another attackable target exists.
+            out = nonGojo
+        elseif #gojo > 0 then
+            -- All other attackable targets are gone: Gojo becomes the only target.
+            out = gojo
+        else
+            out = {}
+        end
+
         return out, myModel, myHRP
     end
 
@@ -13988,7 +14020,7 @@ do
 
     CombatTab:CreateSlider({ Name = "Strongest Raid Range", Range = { 100, 20000 }, Increment = 50,
         CurrentValue = NEXO_STRONGEST_RAID_RANGE, Callback = function(v)
-            NEXO_STRONGEST_RAID_RANGE = tonumber(v) or 1200
+            NEXO_STRONGEST_RAID_RANGE = tonumber(v) or 9999
         end })
     PT(CombatTab, "NexoStrongestRaidOn", "Auto Strongest of Today", function(on) NexoStrongestRaidSet(on) end)
 
