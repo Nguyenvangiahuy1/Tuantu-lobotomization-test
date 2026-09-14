@@ -2266,23 +2266,42 @@ CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
 end)
 
  NEXO_LV.killBFtick = 0
+NEXO_LV.killAuraTargets = NEXO_LV.killAuraTargets or {}
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
 
         if NEXO_LV.KillOn and not (anyBringActive and anyBringActive()) then
-            local n, mm, hrp = NEXO_LV.getNearest(NEXO_LV.AURA_RANGE)
-            NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = n, hrp
-            if n and hrp then
+            -- Kill Near Aura now attacks EVERY valid target inside AURA_RANGE.
+            -- The nearest target is still used only for positioning/sticking.
+            local targets, mm, hrp = NEXO_LV.collectTargets(NEXO_LV.AURA_RANGE)
+            NEXO_LV.killAuraTargets = targets or {}
+
+            local nearest, nearestDist
+            if hrp and type(targets) == "table" then
+                for _, m in ipairs(targets) do
+                    local h = m and m:FindFirstChild("HumanoidRootPart")
+                    if h then
+                        local d = (h.Position - hrp.Position).Magnitude
+                        if not nearestDist or d < nearestDist then
+                            nearest, nearestDist = m, d
+                        end
+                    end
+                end
+            end
+
+            NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nearest, hrp
+            if hrp and type(targets) == "table" and #targets > 0 then
                 NEXO_LV.killBFtick = NEXO_LV.killBFtick + 1
                 if NEXO_LV.killBFtick % 2 == 0 then
                     enableBlackFlash()
-                    NexoQ(pcall, blackFlashList, {n}, mm, hrp)
+                    NexoQ(pcall, blackFlashList, targets, mm, hrp)
                 else
-                    NexoQ(pcall, attackList, {n}, mm, hrp)
+                    NexoQ(pcall, attackList, targets, mm, hrp)
                 end
             end
         else
             NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nil, nil
+            NEXO_LV.killAuraTargets = {}
         end
         task.wait(math.max(0.02, LOOP_GAP * 0.6))
     end
@@ -13727,6 +13746,145 @@ do
     end
     PT(CombatTab, "NexoStrongestOn", "The strongest (Taking No damage from NPCs)", function(on) NexoStrongestSet(on) end)
 
+    -- ===== HyuN Strongest of Today - FULL AUTO RAID =====
+    -- Uses the script's existing "The Honored One" (AGojo) raid engine for
+    -- queue / ready / island handling / retry, while this loop attacks every
+    -- valid NPC in range instead of only the nearest target.
+    NEXO_STRONGEST_RAID_ON = NEXO_STRONGEST_RAID_ON or false
+    NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 1200
+    NEXO_STRONGEST_RAID_LOOP = nil
+    NEXO_STRONGEST_RAID_PREV_AGOJO = nil
+    NEXO_STRONGEST_RAID_LAST_ATTACK = 0
+    NEXO_STRONGEST_RAID_LAST_MOVE = 0
+
+    local function nexoStrongestRaidTargets(range)
+        local myModel = getModel()
+        local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
+        if not myHRP or not NPCsF then return {}, myModel, myHRP end
+        range = tonumber(range) or NEXO_STRONGEST_RAID_RANGE
+
+        local out, seen = {}, {}
+        local myPos = myHRP.Position
+
+        local function add(m)
+            if not m or seen[m] or m == myModel then return end
+            if isPunchingBag(m) or nexoIsPetModel(m) then return end
+            local h, hum = nexoRig(m)
+            if not h then return end
+            if hum and hum.Health <= 0 then return end
+            if (h.Position - myPos).Magnitude > range then return end
+            if not onMyIsland(h.Position) then return end
+            seen[m] = true
+            out[#out + 1] = m
+        end
+
+        for _, m in ipairs(NPCsF:GetChildren()) do add(m) end
+
+        -- Players are intentionally excluded by default; this is a PvE raid
+        -- mode and should not turn the range attack into a player aura.
+        table.sort(out, function(a, b)
+            local function priority(m)
+                local n = string.lower(tostring(m.Name))
+                if string.find(n, "gravity", 1, true) or string.find(n, "core", 1, true) then return 0 end
+                if string.find(n, "gojo", 1, true) or string.find(n, "satoru", 1, true)
+                    or string.find(n, "honored", 1, true) then return 1 end
+                return 2
+            end
+            local pa, pb = priority(a), priority(b)
+            if pa ~= pb then return pa < pb end
+            local ah = a:FindFirstChild("HumanoidRootPart")
+            local bh = b:FindFirstChild("HumanoidRootPart")
+            if not ah then return false end
+            if not bh then return true end
+            return (ah.Position - myPos).Magnitude < (bh.Position - myPos).Magnitude
+        end)
+
+        return out, myModel, myHRP
+    end
+
+    local function nexoStrongestRaidMoveToTarget(target, hrp)
+        if not target or not hrp then return end
+        local nh = target:FindFirstChild("HumanoidRootPart")
+        if not nh then return end
+        local goal = nh.Position - (nh.CFrame.LookVector * 5) + Vector3.new(0, 2, 0)
+        if (hrp.Position - goal).Magnitude <= 7 then return end
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.CFrame = CFrame.new(goal, nh.Position)
+        end)
+    end
+
+    function NexoStrongestRaidSet(on)
+        on = on and true or false
+        NEXO_STRONGEST_RAID_ON = on
+
+        if on then
+            -- The existing raid engine already knows how to queue, move onto
+            -- the correct island, press Ready, and retry after completion.
+            if RaidCfg and RaidCfg.active then
+                if NEXO_STRONGEST_RAID_PREV_AGOJO == nil then
+                    NEXO_STRONGEST_RAID_PREV_AGOJO = RaidCfg.active.AGojo == true
+                end
+                RaidCfg.active.AGojo = true
+            end
+
+            -- Also enable the existing damage-protection helper.
+            pcall(function() NexoStrongestSet(true) end)
+
+            if NEXO_STRONGEST_RAID_LOOP == SESSION then return end
+            NEXO_STRONGEST_RAID_LOOP = SESSION
+
+            task.spawn(function()
+                while NEXOG.NexoHubSession == SESSION do
+                    if NEXO_STRONGEST_RAID_ON then
+                        pcall(function()
+                            local targets, mm, hrp = nexoStrongestRaidTargets(NEXO_STRONGEST_RAID_RANGE)
+                            NEXO_STRONGEST_TARGETS = targets
+
+                            if #targets > 0 and mm and hrp then
+                                -- Move to the highest-priority target, but send
+                                -- the attack list to EVERY target in range.
+                                if os.clock() - NEXO_STRONGEST_RAID_LAST_MOVE > 0.12 then
+                                    NEXO_STRONGEST_RAID_LAST_MOVE = os.clock()
+                                    nexoStrongestRaidMoveToTarget(targets[1], hrp)
+                                end
+
+                                if os.clock() - NEXO_STRONGEST_RAID_LAST_ATTACK > 0.05 then
+                                    NEXO_STRONGEST_RAID_LAST_ATTACK = os.clock()
+                                    NexoQ(attackList, targets, mm, hrp)
+                                    if blackFlashList then
+                                        NexoQ(blackFlashList, targets, mm, hrp)
+                                    end
+                                end
+                            end
+                        end)
+                    end
+                    task.wait(0.05)
+                end
+                if NEXO_STRONGEST_RAID_LOOP == SESSION then
+                    NEXO_STRONGEST_RAID_LOOP = nil
+                end
+            end)
+        else
+            NEXO_STRONGEST_TARGETS = {}
+            pcall(function() NexoStrongestSet(false) end)
+            if RaidCfg and RaidCfg.active then
+                if NEXO_STRONGEST_RAID_PREV_AGOJO ~= nil then
+                    RaidCfg.active.AGojo = NEXO_STRONGEST_RAID_PREV_AGOJO
+                else
+                    RaidCfg.active.AGojo = false
+                end
+            end
+            NEXO_STRONGEST_RAID_PREV_AGOJO = nil
+        end
+    end
+
+    CombatTab:CreateSlider({ Name = "Strongest Raid Range", Range = { 100, 20000 }, Increment = 50,
+        CurrentValue = NEXO_STRONGEST_RAID_RANGE, Callback = function(v)
+            NEXO_STRONGEST_RAID_RANGE = tonumber(v) or 1200
+        end })
+    PT(CombatTab, "NexoStrongestRaidOn", "Auto Strongest of Today", function(on) NexoStrongestRaidSet(on) end)
+
     CombatTab:CreateSection("Passive Ability")
     PT(CombatTab, "FastInfAuraOn", "Auto Use INF Aura", function(on) NEXO_LV.FastInfAuraOn = on end)
     PT(CombatTab, "NexoSMOn", "Auto Sukuna's Mark", function(on) NexoSMOn = on end)
@@ -16419,6 +16577,11 @@ end }
         end
     end)
 
+    RaidTab:CreateSection("Strongest of Today")
+    PT(RaidTab, "NexoStrongestRaidOn_Raid", "Auto Strongest of Today", function(on) NexoStrongestRaidSet(on) end)
+    RaidTab:CreateLabel("Targets: all NPCs + Gojo + gravity cores in range")
+    RaidTab:CreateLabel("Note: Infinity Shield still requires its in-game counter")
+
     RaidTab:CreateSection("Outer World Raid")
 
     PT(RaidTab, "AutoOuterRaidOn", "Auto Awk Star Rage", function(on) AutoOuterRaidOn = on end)
@@ -18150,6 +18313,7 @@ end }
             local parts = {}
             if FastOn then table.insert(parts, "Attack") end
             if NEXO_LV.KillOn then table.insert(parts, "Aura") end
+            if NEXO_STRONGEST_RAID_ON then table.insert(parts, "Strongest") end
             if NEXO_LV.BringOn then table.insert(parts, "Bring") end
             if NEXO_LV.BringAllOn then table.insert(parts, "BringAll") end
             if NEXO_LV.ReachOn then table.insert(parts, "Reach") end
