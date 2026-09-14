@@ -13920,9 +13920,8 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
             end
         end
 
-        -- Phase-5 cores can be Models, nested Models, or a BasePart under a folder.
-        -- Resolve every matching object to its nearest useful Model so attackList()
-        -- receives the same target shape it normally expects.
+        -- Phase-5 cores can be Models, nested Models, or BaseParts under folders.
+        -- Keep the actual core object; NEVER resolve upward to a Gojo ancestor.
         pcall(function()
             for _, inst in ipairs(workspace:GetDescendants()) do
                 -- One malformed/unsupported Instance must not abort the entire scan.
@@ -13933,12 +13932,35 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
                     local isPlaceholder = string.find(lname, "placeholder", 1, true) ~= nil
                     local isCoreName = looksLikeCore(inst)
                     if isPlaceholder or isCoreName then
-                        local target = inst
-                        if not inst:IsA("BasePart") and not inst:IsA("Model") then
-                            local parentModel = inst:FindFirstAncestorOfClass("Model")
-                            target = parentModel or inst
+                        -- IMPORTANT: never promote a raid core to its ANCESTOR Model.
+                        -- In phase 5 the Placeholder/Core can live inside Gojo's Model;
+                        -- promoting it to that ancestor collapses every core into Gojo and
+                        -- makes the next scan believe there is no separate core left.
+                        local target = nil
+                        if inst:IsA("BasePart") or inst:IsA("Model") then
+                            target = inst
+                        else
+                            -- Prefer a descendant Model/part belonging to the named core,
+                            -- never an ancestor. This keeps each Placeholder independent.
+                            local bestModel, bestPart
+                            pcall(function()
+                                for _, d in ipairs(inst:GetDescendants()) do
+                                    if d:IsA("Model") then
+                                        local dn = string.lower(tostring(d.Name or ""))
+                                        local isBossName = string.find(dn, "gojo", 1, true)
+                                            or string.find(dn, "satoru", 1, true)
+                                            or string.find(dn, "honored", 1, true)
+                                        if not isBossName and not bestModel then
+                                            bestModel = d
+                                        end
+                                    elseif d:IsA("BasePart") and not bestPart then
+                                        bestPart = d
+                                    end
+                                end
+                            end)
+                            target = bestModel or bestPart
                         end
-                        if target:IsA("Model") or target:IsA("BasePart") then
+                        if target and (target:IsA("Model") or target:IsA("BasePart")) then
                             add(target, true, true)
                         end
                     end
@@ -13984,6 +14006,15 @@ NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
             -- under Gojo's Model.  coreMap therefore wins over the ancestor/name.
             if coreMap[m] then return false end
             local n = string.lower(tostring(m and m.Name or ""))
+            -- A phase-5 object may be nested under Gojo, but its own identity wins.
+            if string.find(n, "placeholder", 1, true)
+                or string.find(n, "gravity", 1, true)
+                or string.find(n, "core", 1, true)
+                or string.find(n, "orb", 1, true)
+                or string.find(n, "hollowpurple", 1, true)
+                or string.find(n, "hollow_purple", 1, true) then
+                return false
+            end
             return string.find(n, "gojo", 1, true)
                 or string.find(n, "satoru", 1, true)
                 or string.find(n, "honored", 1, true)
