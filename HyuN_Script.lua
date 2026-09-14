@@ -14038,11 +14038,40 @@ do
                             NEXO_STRONGEST_TARGETS = targets
 
                             if #targets > 0 and mm and hrp then
-                                -- Move to the highest-priority target, but send
-                                -- the attack list to EVERY target in range.
+                                -- Movement target is resolved independently from the
+                                -- damage list.  Gojo must NEVER be used as the
+                                -- movement/lock-on target while any non-Gojo target
+                                -- is still alive/in range.
+                                local moveTarget = nil
+                                local moveDist = math.huge
+                                for _, candidate in ipairs(targets) do
+                                    local cn = string.lower(tostring(candidate and candidate.Name or ""))
+                                    local isGojo = string.find(cn, "gojo", 1, true)
+                                        or string.find(cn, "satoru", 1, true)
+                                        or string.find(cn, "honored", 1, true)
+                                    if not isGojo then
+                                        local cp = candidate and (candidate:FindFirstChild("HumanoidRootPart")
+                                            or (candidate:IsA("Model") and candidate.PrimaryPart)
+                                            or candidate:FindFirstChildWhichIsA("BasePart", true))
+                                        if cp then
+                                            local d = (hrp.Position - cp.Position).Magnitude
+                                            if d < moveDist then
+                                                moveDist = d
+                                                moveTarget = candidate
+                                            end
+                                        end
+                                    end
+                                end
+                                -- If no non-Gojo target remains, the resolver has
+                                -- intentionally returned Gojo-only, so Gojo may now
+                                -- become the movement target.
+                                if not moveTarget then
+                                    moveTarget = targets[1]
+                                end
+
                                 if os.clock() - NEXO_STRONGEST_RAID_LAST_MOVE > 0.12 then
                                     NEXO_STRONGEST_RAID_LAST_MOVE = os.clock()
-                                    nexoStrongestRaidMoveToTarget(targets[1], hrp)
+                                    nexoStrongestRaidMoveToTarget(moveTarget, hrp)
                                 end
 
                                 -- Same fast damage cycle as Kill Near Aura: send the
