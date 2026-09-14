@@ -2246,27 +2246,9 @@ end
  NEXO_LV.BringOn = false
 
  NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nil, nil
-CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
-    if NEXOG.NexoHubSession ~= SESSION then return end
-    if not NEXO_LV.KillOn then return end
-    -- When Reach is enabled it owns TP/movement. Aura continues its normal
-    -- damage loop below, but must not overwrite Reach's CFrame.
-    if NEXO_LV.ReachOn then return end
-    if anyBringActive() then return end
-    if NEXO_LV.essenceBusy or NEXO_LV.crateBusy then return end
-    local n, hrp = NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP
-    if not (n and n.Parent and hrp and hrp.Parent) then return end
-    local nh = n:FindFirstChild("HumanoidRootPart")
-    if not nh then return end
-    local goal = auraGoal(nh)
-    pcall(function()
+-- Kill Near Aura is DAMAGE ONLY. It never teleports or moves the local character.
+-- Reach & Kill owns player movement when enabled.
 
-        if (hrp.Position - goal.Position).Magnitude > STICK_OFFSET + 3 then
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = goal
-        end
-    end)
-end)
 
  NEXO_LV.killBFtick = 0
 NEXO_LV.killAuraTargets = NEXO_LV.killAuraTargets or {}
@@ -19210,4 +19192,4 @@ function NexoOptStats()
 end
 NEXOG.NexoOptStats = NexoOptStats
 print("[HyuN] optimizer build OPT-1 active (pool=" .. tostring(NEXO_OPT.MAX_WORKERS) .. " inflight=" .. tostring(NEXO_OPT.MAX_INFLIGHT) .. ")")
--- ===== [/NEXO-OPT] =====
+-- ===== [/NEXO-OPT] ====
