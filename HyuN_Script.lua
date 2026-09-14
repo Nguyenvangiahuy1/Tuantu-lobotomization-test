@@ -13760,40 +13760,103 @@ do
     local function nexoStrongestRaidTargets(range)
         local myModel = getModel()
         local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
-        if not myHRP or not NPCsF then return {}, myModel, myHRP end
+        if not myHRP then return {}, myModel, myHRP end
         range = tonumber(range) or NEXO_STRONGEST_RAID_RANGE
 
         local out, seen = {}, {}
         local myPos = myHRP.Position
 
-        local function add(m)
+        local function getPart(m)
+            if not m then return nil end
+            return m:FindFirstChild("HumanoidRootPart")
+                or (m:IsA("Model") and m.PrimaryPart)
+                or m:FindFirstChildWhichIsA("BasePart", true)
+        end
+
+        local function add(m, isCore)
             if not m or seen[m] or m == myModel then return end
             if isPunchingBag(m) or nexoIsPetModel(m) then return end
-            local h, hum = nexoRig(m)
-            if not h then return end
+
+            local part = getPart(m)
+            if not part then return end
+
+            local hum = m:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health <= 0 then return end
-            if (h.Position - myPos).Magnitude > range then return end
-            if not onMyIsland(h.Position) then return end
+
+            local hpObj = m:FindFirstChild("Health", true)
+            local hp = hpObj and tonumber(hpObj.Value)
+            if hp and hp <= 0 then return end
+
+            if (part.Position - myPos).Magnitude > range then return end
+            if not onMyIsland(part.Position) then return end
+
             seen[m] = true
             out[#out + 1] = m
         end
 
-        for _, m in ipairs(NPCsF:GetChildren()) do add(m) end
+        -- Normal raid NPCs / Gojo.
+        if NPCsF then
+            for _, m in ipairs(NPCsF:GetChildren()) do
+                add(m, false)
+            end
+        end
 
-        -- Players are intentionally excluded by default; this is a PvE raid
-        -- mode and should not turn the range attack into a player aura.
+        -- Strongest phase-5 gravity cores are not guaranteed to be normal NPC
+        -- models with a Humanoid. Scan workspace for the raid's red/blue/orb/core
+        -- objects as well, then feed them through the same DamageCharacter path.
+        local function looksLikeStrongestCore(inst)
+            local n = string.lower(tostring(inst.Name or ""))
+            if not (string.find(n, "gravity", 1, true)
+                or string.find(n, "core", 1, true)
+                or string.find(n, "orb", 1, true)
+                or string.find(n, "hollowpurple", 1, true)
+                or string.find(n, "hollow_purple", 1, true)) then
+                return false
+            end
+
+            -- Prefer explicit red/blue gravity-core naming; avoid unrelated map props.
+            local redblue = string.find(n, "red", 1, true) or string.find(n, "blue", 1, true)
+            local parent = inst.Parent
+            for _ = 1, 5 do
+                if not parent then break end
+                local pn = string.lower(tostring(parent.Name or ""))
+                if string.find(pn, "strongest", 1, true)
+                    or string.find(pn, "gojo", 1, true)
+                    or string.find(pn, "raid", 1, true)
+                    or string.find(pn, "hollow", 1, true)
+                    or string.find(pn, "gravity", 1, true) then
+                    return true
+                end
+                parent = parent.Parent
+            end
+            return redblue and (string.find(n, "orb", 1, true) or string.find(n, "core", 1, true))
+        end
+
+        pcall(function()
+            for _, inst in ipairs(workspace:GetDescendants()) do
+                if inst:IsA("Model") and looksLikeStrongestCore(inst) then
+                    add(inst, true)
+                end
+            end
+        end)
+
         table.sort(out, function(a, b)
             local function priority(m)
                 local n = string.lower(tostring(m.Name))
-                if string.find(n, "gravity", 1, true) or string.find(n, "core", 1, true) then return 0 end
-                if string.find(n, "gojo", 1, true) or string.find(n, "satoru", 1, true)
+                -- Phase-5 gravity cores MUST be handled before Gojo.
+                if string.find(n, "gravity", 1, true)
+                    or string.find(n, "core", 1, true)
+                    or string.find(n, "orb", 1, true)
+                    or string.find(n, "hollowpurple", 1, true)
+                    or string.find(n, "hollow_purple", 1, true) then return 0 end
+                if string.find(n, "gojo", 1, true)
+                    or string.find(n, "satoru", 1, true)
                     or string.find(n, "honored", 1, true) then return 1 end
                 return 2
             end
             local pa, pb = priority(a), priority(b)
             if pa ~= pb then return pa < pb end
-            local ah = a:FindFirstChild("HumanoidRootPart")
-            local bh = b:FindFirstChild("HumanoidRootPart")
+            local ah, bh = getPart(a), getPart(b)
             if not ah then return false end
             if not bh then return true end
             return (ah.Position - myPos).Magnitude < (bh.Position - myPos).Magnitude
