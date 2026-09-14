@@ -5,19 +5,9 @@ if NEXOG.NexoHub and NEXOG.NexoHub.stop then pcall(NEXOG.NexoHub.stop) end
 NEXOG.NexoHubSession = (NEXOG.NexoHubSession or 0) + 1
 local SESSION = NEXOG.NexoHubSession
 
-NEXO_BUILD = "HYUN-V1"
+NEXO_BUILD = "REMOTE-FIX-V15"
 NEXOG.NEXO_BUILD = NEXO_BUILD
-
--- ===== HyuN Script metadata =====
--- Author: huyne1234
--- Brand: HyuN (huyne1234)
--- Website: https://bot-agency.netlify.app/
--- Keep runtime identifiers below unchanged for compatibility.
-NEXO_AUTHOR = "huyne1234"
-NEXO_BRAND = "HyuN (huyne1234)"
-NEXO_WEBSITE = "https://bot-agency.netlify.app/"
-
-print("[HyuN] build " .. NEXO_BUILD .. " loaded (bring engine active)")
+print("[NEXO] build " .. NEXO_BUILD .. " loaded (bring engine active)")
 
 NEXO_IMG_FOLDER = "NexoHub_Images"
 NEXO_IMG_MEMO   = NEXO_IMG_MEMO or {}
@@ -361,7 +351,7 @@ function NexoReqTotals(tot, order, have)
 end
 
  NEXO_LV.ATTACK_RANGE = 150
- NEXO_LV.AURA_RANGE   = 9999
+ NEXO_LV.AURA_RANGE   = 500
  NEXO_LV.BRING_RANGE  = 500
 local BRING_OFFSET = 4
 BRING_GAP          = 0.05
@@ -523,8 +513,8 @@ local DamageCharacter = NexoRemote("CombatService", "DamageCharacter_Method")
  NEXO_LV.AcceptQuest     = NexoRemote("QuestService",  "AcceptQuest_Method")
 NEXOG.NEXO_REMOTES_OK   = (StartSkill ~= nil) and (DamageCharacter ~= nil)
 NEXOG.NEXO_SKILL_REMOTE = StartSkill and StartSkill.Name or "MISSING"
-if not StartSkill then warn("[HyuN] SkillService start-skill remote not found -- attacks disabled") end
-if not DamageCharacter then warn("[HyuN] CombatService.DamageCharacter_Method not found -- damage disabled") end
+if not StartSkill then warn("[NEXO] SkillService start-skill remote not found -- attacks disabled") end
+if not DamageCharacter then warn("[NEXO] CombatService.DamageCharacter_Method not found -- damage disabled") end
 
 NexoAccT = NexoAccT or {}
 function NexoSafeAccept(id)
@@ -2246,111 +2236,28 @@ end
  NEXO_LV.BringOn = false
 
  NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nil, nil
--- Kill Near Aura is DAMAGE ONLY. It never teleports or moves the local character.
--- Reach & Kill owns player movement when enabled.
-
+-- Kill Near Aura: DAMAGE ONLY. No character teleport is performed here.
 
  NEXO_LV.killBFtick = 0
-NEXO_LV.killAuraTargets = NEXO_LV.killAuraTargets or {}
-
--- Kill Near Aura target resolver: non-Gojo targets always have priority.
--- Gojo is excluded completely while ANY other attackable NPC/core/object exists.
-local function nexoKillAuraPriorityTargets(range)
-    local myModel = getModel()
-    local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
-    if not myHRP then return {}, myModel, myHRP end
-    range = tonumber(range) or 9999
-    local myPos = myHRP.Position
-    local out, seen = {}, {}
-
-    local function partOf(x)
-        if not x then return nil end
-        if x:IsA("BasePart") then return x end
-        if x:IsA("Model") then
-            return x:FindFirstChild("HumanoidRootPart") or x.PrimaryPart or x:FindFirstChildWhichIsA("BasePart", true)
-        end
-        return x:FindFirstChildWhichIsA("BasePart", true)
-    end
-    local function nameOf(x) return string.lower(tostring(x and x.Name or "")) end
-    local function isGojo(x)
-        local n=nameOf(x)
-        return string.find(n,"gojo",1,true) or string.find(n,"satoru",1,true) or string.find(n,"honored",1,true)
-    end
-    local function isSpecial(x)
-        local n=nameOf(x)
-        return string.find(n,"placeholder",1,true) or string.find(n,"gravity",1,true)
-            or string.find(n,"core",1,true) or string.find(n,"orb",1,true)
-            or string.find(n,"hollowpurple",1,true) or string.find(n,"hollow_purple",1,true)
-    end
-    local function add(x)
-        if not x or seen[x] or x==myModel or isPunchingBag(x) or nexoIsPetModel(x) then return end
-        local part=partOf(x)
-        if not part or (part.Position-myPos).Magnitude>range or not onMyIsland(part.Position) then return end
-        if x:IsA("Model") then
-            local hum=x:FindFirstChildOfClass("Humanoid")
-            if hum then if hum.Health<=0 then return end
-            elseif not isSpecial(x) then
-                local hp=x:FindFirstChild("Health",true)
-                if not (hp and (hp:IsA("NumberValue") or hp:IsA("IntValue")) and hp.Value>0) then return end
-            end
-        elseif not isSpecial(x) then return end
-        seen[x]=true
-        out[#out+1]=x
-    end
-
-    if NPCsF then for _,m in ipairs(NPCsF:GetChildren()) do add(m) end end
-    -- PLACEHOLDER/core objects may live outside NPCsF and may have no Humanoid.
-    pcall(function()
-        for _,inst in ipairs(workspace:GetDescendants()) do
-            if isSpecial(inst) then
-                local target=inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model") or inst
-                add(target)
-            end
-        end
-    end)
-
-    local nonGojo, gojo = {}, {}
-    for _,m in ipairs(out) do if isGojo(m) then gojo[#gojo+1]=m else nonGojo[#nonGojo+1]=m end end
-    local active=(#nonGojo>0) and nonGojo or gojo
-    table.sort(active,function(a,b)
-        local pa,pb=partOf(a),partOf(b)
-        local da=pa and (pa.Position-myPos).Magnitude or math.huge
-        local db=pb and (pb.Position-myPos).Magnitude or math.huge
-        return da<db
-    end)
-    return active,myModel,myHRP
-end
-
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
+
         if NEXO_LV.KillOn and not (anyBringActive and anyBringActive()) then
-            local targets,mm,hrp=nexoKillAuraPriorityTargets(NEXO_LV.AURA_RANGE)
-            NEXO_LV.killAuraTargets=targets or {}
-            local nearest,nearestDist
-            if hrp then
-                for _,m in ipairs(targets) do
-                    local h=m and (m:FindFirstChild("HumanoidRootPart") or (m:IsA("Model") and m.PrimaryPart))
-                    if h then
-                        local d=(h.Position-hrp.Position).Magnitude
-                        if not nearestDist or d<nearestDist then nearest,nearestDist=m,d end
-                    end
-                end
-            end
-            NEXO_LV.killAuraTarget,NEXO_LV.killAuraHRP=nearest,hrp
-            if hrp and #targets>0 then
-                NEXO_LV.killBFtick=NEXO_LV.killBFtick+1
-                if NEXO_LV.killBFtick%2==0 then
+            local n, mm, hrp = NEXO_LV.getNearest(NEXO_LV.AURA_RANGE)
+            NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = n, hrp
+            if n and hrp then
+                NEXO_LV.killBFtick = NEXO_LV.killBFtick + 1
+                if NEXO_LV.killBFtick % 2 == 0 then
                     enableBlackFlash()
-                    NexoQ(pcall,blackFlashList,targets,mm,hrp)
+                    NexoQ(pcall, blackFlashList, {n}, mm, hrp)
                 else
-                    NexoQ(pcall,attackList,targets,mm,hrp)
+                    NexoQ(pcall, attackList, {n}, mm, hrp)
                 end
             end
         else
-            NEXO_LV.killAuraTarget,NEXO_LV.killAuraHRP=nil,nil
-            NEXO_LV.killAuraTargets={}
+            NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nil, nil
         end
-        task.wait(math.max(0.02,LOOP_GAP*0.6))
+        task.wait(math.max(0.02, LOOP_GAP * 0.6))
     end
 end)
 
@@ -2528,120 +2435,22 @@ end)
 
  NEXO_LV.ReachOn = false
 
--- Reach & Kill movement is independent from Kill Near Aura.
--- Reach owns TELEPORT movement; Kill Near Aura only sends DAMAGE requests.
 local reachTargets, reachHRP = {}, nil
-
--- Reach uses the original behavior (nearest target that is more than 12 studs
--- away), but also recognizes the same special "error" objects used by the
--- combat resolver, so Gojo / Placeholder / Core-type targets are reachable.
-local function nexoReachPart(target)
-    if not target then return nil end
-    if target:IsA("BasePart") then return target end
-    if target:IsA("Model") then
-        local hum = target:FindFirstChildOfClass("Humanoid")
-        return target:FindFirstChild("HumanoidRootPart")
-            or (hum and hum.RootPart)
-            or target.PrimaryPart
-            or target:FindFirstChildWhichIsA("BasePart", true)
-    end
-    return target:FindFirstChildWhichIsA("BasePart", true)
-end
-
-local function nexoReachAlive(target)
-    if not target or not target.Parent then return false end
-    if target:IsA("Model") then
-        local hum = target:FindFirstChildOfClass("Humanoid")
-        if hum then return hum.Health > 0 end
-        local hp = target:FindFirstChild("Health", true)
-        if hp and (hp:IsA("NumberValue") or hp:IsA("IntValue")) then
-            return hp.Value > 0
-        end
-    end
-    return true
-end
-
-local function nexoReachIsSpecial(target)
-    local n = string.lower(tostring(target and target.Name or ""))
-    return string.find(n, "placeholder", 1, true)
-        or string.find(n, "gravity", 1, true)
-        or string.find(n, "core", 1, true)
-        or string.find(n, "orb", 1, true)
-        or string.find(n, "hollowpurple", 1, true)
-        or string.find(n, "hollow_purple", 1, true)
-end
-
-local function nexoReachCollectTargets()
-    local myModel = getModel()
-    local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
-    if not myHRP then return {}, myModel, myHRP end
-
-    local targets, seen = {}, {}
-    local function add(target)
-        if not target or seen[target] or target == myModel then return end
-        if isPunchingBag(target) or nexoIsPetModel(target) then return end
-        local part = nexoReachPart(target)
-        if not part or not part.Parent then return end
-        if not onMyIsland(part.Position) then return end
-        if target:IsA("Model") then
-            local hum = target:FindFirstChildOfClass("Humanoid")
-            if hum then
-                if hum.Health <= 0 then return end
-            elseif not nexoReachIsSpecial(target) then
-                local hp = target:FindFirstChild("Health", true)
-                if not (hp and (hp:IsA("NumberValue") or hp:IsA("IntValue")) and hp.Value > 0) then
-                    return
-                end
-            end
-        elseif not nexoReachIsSpecial(target) then
-            return
-        end
-        seen[target] = true
-        targets[#targets + 1] = target
-    end
-
-    -- Normal NPCs (includes Gojo when it is represented as an NPC model).
-    if NPCsF then
-        for _, m in ipairs(NPCsF:GetChildren()) do
-            add(m)
-        end
-    end
-
-    -- Special combat objects can be outside NPCsF.
-    pcall(function()
-        for _, inst in ipairs(workspace:GetDescendants()) do
-            if nexoReachIsSpecial(inst) then
-                local target = inst:IsA("Model") and inst
-                    or inst:FindFirstAncestorOfClass("Model")
-                    or inst
-                add(target)
-            end
-        end
-    end)
-
-    return targets, myModel, myHRP
-end
-
 CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
     if NEXOG.NexoHubSession ~= SESSION then return end
     if not NEXO_LV.ReachOn then return end
-
     local hrp = reachHRP
     if not (hrp and hrp.Parent) then return end
-
     local far, fd
-    for _, target in ipairs(reachTargets) do
-        if target and target.Parent and nexoReachAlive(target) then
-            local part = nexoReachPart(target)
-            if part then
-                local d = (part.Position - hrp.Position).Magnitude
-                if d > 12 and (not fd or d < fd) then
-                    far, fd = part, d
-                end
+    for _, m in ipairs(reachTargets) do
+        if m.Parent then
+            local h = m:FindFirstChild("HumanoidRootPart")
+            if h then
+                local d = (h.Position - hrp.Position).Magnitude
+                if d > 12 and (not fd or d < fd) then far, fd = h, d end
             end
         end
     end
-
     if far then
         local goal = auraGoal(far)
         pcall(function()
@@ -2650,14 +2459,10 @@ CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
         end)
     end
 end)
-
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
         if NEXO_LV.ReachOn then
-            local targets, mm, hrp = {}, nil, nil
-            pcall(function()
-                targets, mm, hrp = nexoReachCollectTargets()
-            end)
+            local targets, mm, hrp = NEXO_LV.collectAllNPCs()
             reachTargets, reachHRP = targets or {}, hrp
             if hrp and #targets > 0 then
                 NexoQ(pcall, attackList, targets, mm, hrp)
@@ -4181,7 +3986,7 @@ function bossServerHop()
             end
         end
     end
-    pcall(function() Library:Notify({ Title = "HyuN Script", Content = "No boss here -- server hopping...", Type = "Info", Duration = 3 }) end)
+    pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "No boss here -- server hopping...", Type = "Info", Duration = 3 }) end)
     NexoAllowTp = true
     if best then
         pcall(function() TeleportService:TeleportToPlaceInstance(placeId, best, plr) end)
@@ -4928,7 +4733,7 @@ function NexoLazyGate(partName, questId)
             end
         end)
         pcall(function() Library:Notify({
-            Title = "HyuN Script",
+            Title = "NEXO HUB",
             Content = (ok and pos) and (partName .. " done") or ("No " .. partName .. " found"),
             Type = (ok and pos) and "Success" or "Error", Duration = 3,
         }) end)
@@ -5151,7 +4956,7 @@ function NexoLazyWorkerBody(gen)
                     Settings["LazyFogOn"] = false
                     pcall(function() saveSettings() end)
                     pcall(function() Library:Notify({
-                        Title = "HyuN Script",
+                        Title = "NEXO HUB",
                         Content = "Lazy Sorcerer: all " .. total .. " FogSealedGate done - stopped",
                         Type = "Success", Duration = 4,
                     }) end)
@@ -5160,7 +4965,7 @@ function NexoLazyWorkerBody(gen)
                     Settings["LazyFogOn"] = false
                     pcall(function() saveSettings() end)
                     pcall(function() Library:Notify({
-                        Title = "HyuN Script",
+                        Title = "NEXO HUB",
                         Content = "Lazy Sorcerer: " .. done .. "/" .. total ..
                                   " gates opened - stopped (accept the quest, then retry)",
                         Type = "Error", Duration = 5,
@@ -6559,7 +6364,7 @@ NEXO_HR_ORDER = { "SHR", "PHR" }
 
 function NexoHRNotify(msg, kind)
     pcall(function()
-        Library:Notify({ Title = "HyuN Script", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
+        Library:Notify({ Title = "NEXO HUB", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
     end)
 end
 
@@ -7040,7 +6845,7 @@ NEXO_KM_KAMU  = { id = "Yorozu1", label = "Kamutoke", reward = "Kamutoke", once 
 
 function NexoKMNotify(msg, kind)
     pcall(function()
-        Library:Notify({ Title = "HyuN Script", Content = msg, Type = kind or "Info", Duration = 7 })
+        Library:Notify({ Title = "NEXO HUB", Content = msg, Type = kind or "Info", Duration = 7 })
     end)
 end
 
@@ -7695,7 +7500,7 @@ function NexoBannerSync()
         pcall(saveSettings)
         pcall(function() nxBannerDrop:Set(labels[1]) end)
         pcall(function()
-            Library:Notify({ Title = "HyuN Script", Content = "Banner rotation changed \226\134\146 now on " .. labels[1], Type = "Info", Duration = 5 })
+            Library:Notify({ Title = "NEXO HUB", Content = "Banner rotation changed \226\134\146 now on " .. labels[1], Type = "Info", Duration = 5 })
         end)
     end
 end
@@ -8381,7 +8186,7 @@ if not NEXOG.NexoTpGuard then
                 local hooked
                 hooked = hookfunction(original, function(...)
                     if AntiTpOn and not NexoAllowTp then
-                        warn("[HyuN Script] blocked TeleportService:" .. name .. " (Anti Teleport ON)")
+                        warn("[NEXO HUB] blocked TeleportService:" .. name .. " (Anti Teleport ON)")
                         return nil
                     end
                     return hooked(...)
@@ -9759,7 +9564,7 @@ task.spawn(function()
         if InfRaidNotifyOn and was == false and open then
             pcall(function()
                 Library:Notify({
-                    Title = "HyuN Script",
+                    Title = "NEXO HUB",
                     Content = "Infinity Raid is OPEN  -  closes in " .. nexoInfClock(left),
                     Type = "Success",
                     Duration = 8,
@@ -9972,7 +9777,7 @@ task.spawn(function()
                                 AutoCTExchangeOn = false
                                 fails = 0
                                 pcall(function()
-                                    Library:Notify({ Title = "HyuN Script", Content = "Auto Exchange stopped: the server rejected the exchange", Type = "Warning", Duration = 6 })
+                                    Library:Notify({ Title = "NEXO HUB", Content = "Auto Exchange stopped: the server rejected the exchange", Type = "Warning", Duration = 6 })
                                 end)
                             end
                             task.wait(0.5)
@@ -10373,7 +10178,7 @@ NexoMaxPotentialToggle = nil
 
 function NexoRampageNotify(msg, kind)
     pcall(function()
-        Library:Notify({ Title = "HyuN Script", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
+        Library:Notify({ Title = "NEXO HUB", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
     end)
 end
 
@@ -10642,7 +10447,7 @@ end
 
 function NexoShopNotify(msg, kind)
     pcall(function()
-        Library:Notify({ Title = "HyuN Script • Shop", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
+        Library:Notify({ Title = "NEXO SHOP", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
     end)
 end
 
@@ -10840,7 +10645,7 @@ end
 
 function NexoAbx.Notify(msg, kind)
     pcall(function()
-        Library:Notify({ Title = "HyuN Script • Exchange", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
+        Library:Notify({ Title = "NEXO EXCHANGE", Content = tostring(msg), Type = kind or "Info", Duration = 6 })
     end)
 end
 
@@ -11224,7 +11029,7 @@ function NexoBuildShopTab(tab)
     NEXO_LV.NexoShopStatusLoop()
 end
 
-NEXO_LOADER_URL = "https://raw.githubusercontent.com/Nguyenvangiahuy1/Tuantu-lobotomization-test/main/HyuN_Script.lua"
+NEXO_LOADER_URL = "https://raw.githubusercontent.com/Heko-max/JJZ/refs/heads/main/JJZ_1_X_X"
 AutoExecOn       = false
 AutoExecDelayOn  = false
 AutoExecDelaySec = 0
@@ -13298,7 +13103,7 @@ do
         ["Satoru Gojo"]                    = "Gojo Estate quest chain and Limitless awakening",
 
         ["Basic Combat"]                   = "Auto attack, black flash, plunge and reach",
-        ["Are You Sure . . . ?"]           = "Nothing...",
+        ["Are You Sure . . . ?"]           = "Nouthing...?",
         ["Passive Ability"]                = "Auto Use INF Aura and Auto Sukuna's Mark",
         ["Auto Skills"]                    = "One toggle per cursed technique",
         ["Sukuna"]                         = "Fuga and Dismantle automation",
@@ -13321,7 +13126,7 @@ do
         ["Overlord Raid"]                  = "Select raid and difficulty, then auto run",
         ["Outer World Raid"]               = "Awakened Star Rage and Shadow raids",
         ["Jujutsu Trial Tower"]            = "Pick a chamber and clear it automatically",
-        ["Infinity Raid"]                  = "Infinity - Sorcerer Killer, Infinity - King of Curses, etc.",
+        ["Infinity Raid"]                  = "Infinity - Sorcerer Killer, Infinity - King of Curses ect",
 
         ["Island Teleport"]                = "Teleport straight to Shadow Island",
         ["Shikigami Bosses"]               = "Select and auto kill Shikigami bosses",
@@ -13352,7 +13157,7 @@ do
         ["Crate Opener"]                   = "Bulk open crates from your inventory",
         ["Auto Sell"]                      = "Automatically sell the items you choose",
         ["Trial CT & TP Block"]            = "Trial CT tools and teleport blocking",
-        ["Stats Points"]                   = "Auto Stat Points in skill trees",
+        ["Stats Points"]                   = "Auto Stats Poin in skill trees",
 
         ["Live Status"]                    = "Live readout of everything running",
         ["My Position"]                    = "Copy your current coordinates",
@@ -13369,12 +13174,12 @@ do
     NEXO_DEFAULT_TAB_DESC     = ""
     NEXO_DEFAULT_SECTION_DESC = ""
 
-    NEXO_WELCOME = 'WELCOME TO\n<font color="#f8042e">HYUN SCRIPT</font>\nJUJUTSU ZERO'
+    NEXO_WELCOME = 'WELCOME TO\n<font color="#f8042e">BEST FREE</font>\nJUJUTSU ZERO HUB'
 
     NEXO_SUBTITLE = table.concat({
-        "HyuN (huyne1234) • Script Author",
-        "Website: https://bot-agency.netlify.app/",
-        "Jujutsu Zero utility script",
+        "Thanks for using our services.",
+        "We are commited to bring greatest",
+        "experience to users !",
     }, "\n")
 
     NEXO_HOME_CARDS = {
@@ -13386,12 +13191,12 @@ do
     local Luna = {}
 
     function Luna.Fail(msg)
-        msg = "[HyuN Script] " .. tostring(msg)
+        msg = "[NEXO HUB] " .. tostring(msg)
         pcall(function() warn(msg) end)
         pcall(function() print(msg) end)
         pcall(function()
             game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "HyuN Script", Text = msg, Duration = 12,
+                Title = "NEXO HUB", Text = msg, Duration = 12,
             })
         end)
     end
@@ -13668,7 +13473,7 @@ do
         local cfg = o.ConfigSettings or {}
         local ok, ui = pcall(function()
             return Luna.Lib:CreateWindow({
-                welcome   = tostring(NEXO_WELCOME or o.Name or "HyuN Script"),
+                welcome   = tostring(NEXO_WELCOME or o.Name or "NEXO HUB"),
                 subtitle  = tostring(NEXO_SUBTITLE or o.Subtitle or ""),
                 folder    = cfg.ConfigFolder or cfg.FolderName or "NEXO_HUB",
                 toggleKey = "RightShift",
@@ -13706,7 +13511,7 @@ do
     function Luna:Notification(o)
         if type(o) == "string" then o = { Content = o } end
         o = o or {}
-        local title = tostring(o.Title or "HyuN Script")
+        local title = tostring(o.Title or "NEXO HUB")
         local body  = tostring(o.Content or o.Text or "")
         local msg   = title
         if body ~= "" then msg = title .. "\n" .. body end
@@ -13724,7 +13529,7 @@ do
         Luna.Window = nil
     end
     if type(Luna) ~= "table" then
-        warn("[HyuN Script] UI library did not return a usable object.")
+        warn("[NEXO HUB] UI library did not return a usable object.")
         return
     end
 
@@ -13742,7 +13547,7 @@ do
             elseif t == "Warning" then icon = "priority_high" end
             pcall(function()
                 Luna:Notification({
-                    Title       = o.Title or "HyuN Script",
+                    Title       = o.Title or "NEXO HUB",
                     Content     = o.Content or "",
                     Icon        = icon,
                     ImageSource = "Material",
@@ -13753,12 +13558,12 @@ do
     }
 
     local Window = Luna:CreateWindow({
-        Name           = "HyuN Script",
-        Subtitle       = "HyuN (huyne1234) • Jujutsu Zero",
+        Name           = "NEXO HUB",
+        Subtitle       = "JuJutsu Zero [V2]",
         LogoID         = "17006882295",
         LoadingEnabled = false,
-        LoadingTitle   = "HyuN Script",
-        LoadingSubtitle = "Author: huyne1234 • bot-agency.netlify.app",
+        LoadingTitle   = "NEXO HUB",
+        LoadingSubtitle = "JuJutsu Zero [V2]",
         ConfigSettings = {
             RootFolder   = nil,
             ConfigFolder = "NEXO_HUB",
@@ -13829,13 +13634,6 @@ do
     pcall(function() SettingsTab = Window:CreateTab({ Name = "Settings", Icon = nexoTabIcon("Settings", "person"), ImageSource = "Material" }) end)
     if not SettingsTab then SettingsTab = Window:CreateTab({ Name = "Settings", Icon = "person", ImageSource = "Material" }) end
 
-    pcall(function()
-        SettingsTab:CreateSection("HyuN Script")
-        SettingsTab:CreateLabel("Author: huyne1234")
-        SettingsTab:CreateLabel("Website: https://bot-agency.netlify.app/")
-        SettingsTab:CreateLabel("Brand: HyuN (huyne1234)")
-    end)
-
     CombatTab:CreateSection("Basic Combat")
     PT(CombatTab, "FastOn", "Auto Attack", function(on) FastOn = on end)
 
@@ -13847,7 +13645,7 @@ do
         PunchingBagPosCache = { t = -1, list = {} }
     end)
     PT(CombatTab, "PlungeOn", "Auto Plunge", function(on) NEXO_LV.PlungeOn = on end)
-    PT(CombatTab, "KillOn", "Kill Near Aura", function(on) NEXO_LV.KillOn = on end)
+    PT(CombatTab, "KillOn", "Kill Nearest Aura", function(on) NEXO_LV.KillOn = on end)
     PT(CombatTab, "ReachOn", "Reach & Kill", function(on) NEXO_LV.ReachOn = on end)
 
     CombatTab:CreateSection("Are You Sure . . . ?")
@@ -13893,470 +13691,7 @@ do
         end
     end)()
     end
-    PT(CombatTab, "NexoStrongestOn", "The strongest (Taking No damage from NPCs)", function(on) NexoStrongestSet(on) end)
-
-    -- ===== HyuN Strongest of Today - FULL AUTO RAID =====
-    -- Uses the script's existing "The Honored One" (AGojo) raid engine for
-    -- queue / ready / island handling / retry, while this loop attacks every
-    -- valid NPC in range instead of only the nearest target.
-    NEXO_STRONGEST_RAID_ON = NEXO_STRONGEST_RAID_ON or false
-NEXO_STRONGEST_RAID_COMBAT_LOCK = NEXO_STRONGEST_RAID_COMBAT_LOCK or false
-NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
-    NEXO_STRONGEST_RAID_RANGE = tonumber(NEXO_STRONGEST_RAID_RANGE) or 9999
-    NEXO_STRONGEST_RAID_LOOP = nil
-    NEXO_STRONGEST_RAID_PREV_AGOJO = nil
-    NEXO_STRONGEST_RAID_LAST_ATTACK = 0
-    NEXO_STRONGEST_RAID_LAST_MOVE = 0
-    NEXO_STRONGEST_RAID_LAST_TARGET = nil
-    NEXO_STRONGEST_RAID_TARGET_SINCE = 0
-    NEXO_STRONGEST_RAID_SEEN_GOJO = false
-
-    local function nexoStrongestRaidTargets(range)
-        local myModel = getModel()
-        local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
-        if not myHRP then return {}, myModel, myHRP end
-        range = tonumber(range) or 9999
-
-        local out, seen, coreMap = {}, {}, {}
-        local myPos = myHRP.Position
-
-        local function getPart(inst)
-            if not inst then return nil end
-            if inst:IsA("BasePart") then return inst end
-            if inst:IsA("Model") then
-                local hum = inst:FindFirstChildOfClass("Humanoid")
-                return inst:FindFirstChild("HumanoidRootPart")
-                    or (hum and hum.RootPart)
-                    or inst.PrimaryPart
-                    or inst:FindFirstChildWhichIsA("BasePart", true)
-            end
-            return inst:FindFirstChildWhichIsA("BasePart", true)
-        end
-
-        local function isGojoName(inst)
-            local n = string.lower(tostring(inst and inst.Name or ""))
-            return string.find(n, "gojo", 1, true)
-                or string.find(n, "satoru", 1, true)
-                or string.find(n, "honored", 1, true)
-        end
-
-        local gojoModel, gojoHum
-        if NPCsF then
-            for _, m in ipairs(NPCsF:GetChildren()) do
-                if isGojoName(m) then
-                    gojoModel = m
-                    gojoHum = m:FindFirstChildOfClass("Humanoid")
-                    break
-                end
-            end
-        end
-
-        -- Phase 5 is the ONLY phase where the extra Gravity/Placeholder/Hollow Purple
-        -- objects should become combat targets.  Earlier versions scanned all of
-        -- Workspace and found unrelated/future/visual objects during phase 1,
-        -- causing Auto Strongest to ignore Gojo from the start.
-        local gojoMax = gojoHum and gojoHum.MaxHealth or 0
-        local gojoHp = gojoHum and gojoHum.Health or 0
-        local gojoRatio = (gojoHum and gojoMax > 0) and (gojoHp / gojoMax) or 1
-
-        -- Phase gate: first see/attack Gojo normally. Only allow Phase-5 objects
-        -- after Gojo has actually been present as a normal raid boss and has dropped
-        -- to the documented ~35%% threshold. This prevents stray Placeholder/Core
-        -- visuals from stealing the target during phases 1-4.
-        if gojoModel and gojoHum and gojoMax > 0 and gojoHp > 0 and gojoRatio > 0.35 then
-            NEXO_STRONGEST_RAID_SEEN_GOJO = true
-        end
-        local phase5 = (NEXO_STRONGEST_RAID_SEEN_GOJO == true)
-            and (gojoHum and gojoMax > 0 and gojoHp > 0 and gojoRatio <= 0.35)
-            or false
-        NEXO_STRONGEST_PHASE5 = phase5
-
-        local function coreName(inst)
-            local n = string.lower(tostring(inst and inst.Name or ""))
-            return string.find(n, "gravity", 1, true)
-                or string.find(n, "placeholder", 1, true)
-                or string.find(n, "hollowpurple", 1, true)
-                or string.find(n, "hollow_purple", 1, true)
-                or string.find(n, "purplecore", 1, true)
-        end
-
-        local function add(m, isCore, bypassIsland)
-            if not m or seen[m] or m == myModel then return end
-            local part = getPart(m)
-            if not part then return end
-            if not isCore then
-                if isPunchingBag(m) or nexoIsPetModel(m) then return end
-            end
-            local hum = m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") or nil
-            if hum and hum.Health <= 0 then return end
-            local hpObj = m:FindFirstChild("Health", true)
-            if hpObj and (hpObj:IsA("NumberValue") or hpObj:IsA("IntValue")) and hpObj.Value <= 0 then return end
-            if (part.Position - myPos).Magnitude > range then return end
-            if not bypassIsland and not onMyIsland(part.Position) then return end
-            seen[m] = true
-            if isCore then coreMap[m] = true end
-            out[#out + 1] = m
-        end
-
-        -- Normal raid NPCs. During phases 1-4, Strongest should fight Gojo first/only.
-        if NPCsF then
-            for _, m in ipairs(NPCsF:GetChildren()) do
-                add(m, false, false)
-            end
-        end
-
-        if phase5 then
-            -- Only scan explicit Phase-5 combat-object names. Do not promote folders
-            -- to ancestor Models; a core nested under Gojo remains its own target.
-            pcall(function()
-                for _, inst in ipairs(workspace:GetDescendants()) do
-                    pcall(function()
-                        if coreName(inst) then
-                            local target
-                            if inst:IsA("BasePart") or inst:IsA("Model") then
-                                target = inst
-                            else
-                                -- Pick a descendant part/model, never an ancestor Gojo.
-                                for _, d in ipairs(inst:GetDescendants()) do
-                                    if d:IsA("Model") and not isGojoName(d) then
-                                        target = d
-                                        break
-                                    end
-                                end
-                                if not target then
-                                    for _, d in ipairs(inst:GetDescendants()) do
-                                        if d:IsA("BasePart") then target = d; break end
-                                    end
-                                end
-                            end
-                            if target and (target:IsA("Model") or target:IsA("BasePart")) then
-                                add(target, true, true)
-                            end
-                        end
-                    end)
-                end
-            end)
-        end
-
-        -- Drop dead/inactive phase-5 objects from the combat list. Some raid objects
-        -- keep their Model/Folder after destruction, so checking only Parent is not enough.
-        local function targetHealthAlive(m)
-            if not m then return false end
-            local hum = m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") or nil
-            if hum then return hum.Health > 0 end
-            for _, key in ipairs({"Health", "HP", "HitPoints", "Hitpoint", "CurrentHealth"}) do
-                local ok, v = pcall(function() return m:GetAttribute(key) end)
-                if ok and type(v) == "number" then return v > 0 end
-                local obj = m:FindFirstChild(key, true)
-                if obj and (obj:IsA("NumberValue") or obj:IsA("IntValue")) then return obj.Value > 0 end
-            end
-            local dead = false
-            pcall(function() dead = m:GetAttribute("Dead") == true or m:GetAttribute("Destroyed") == true end)
-            if dead then return false end
-            return m.Parent ~= nil
-        end
-
-        local aliveOut = {}
-        for _, m in ipairs(out) do
-            if targetHealthAlive(m) then aliveOut[#aliveOut + 1] = m end
-        end
-        out = aliveOut
-
-        -- Deduplicate targets sharing the same physical combat part. This prevents
-        -- one Placeholder from appearing multiple times through nested descendants.
-        local unique, usedPart = {}, {}
-        for _, m in ipairs(out) do
-            local part = getPart(m)
-            if part and not usedPart[part] then
-                usedPart[part] = true
-                unique[#unique + 1] = m
-            end
-        end
-        out = unique
-
-        table.sort(out, function(a, b)
-            local function priority(m)
-                if phase5 and coreMap[m] then return 0 end
-                if isGojoName(m) then return 1 end
-                return 2
-            end
-            local pa, pb = priority(a), priority(b)
-            if pa ~= pb then return pa < pb end
-            local ah, bh = getPart(a), getPart(b)
-            if not ah then return false end
-            if not bh then return true end
-            return (ah.Position - myPos).Magnitude < (bh.Position - myPos).Magnitude
-        end)
-
-        -- Before phase 5: ALWAYS prioritize Gojo and ignore incidental extra objects.
-        if not phase5 then
-            local onlyGojo = {}
-            for _, m in ipairs(out) do
-                if isGojoName(m) then onlyGojo[#onlyGojo + 1] = m end
-            end
-            if #onlyGojo > 0 then out = onlyGojo else out = {} end
-        else
-            -- Phase 5: cores first. Gojo only after every core/object disappears.
-            local cores, bosses = {}, {}
-            for _, m in ipairs(out) do
-                if coreMap[m] then cores[#cores + 1] = m
-                elseif isGojoName(m) then bosses[#bosses + 1] = m end
-            end
-            if #cores > 0 then out = cores
-            elseif #bosses > 0 then out = bosses
-            else out = {} end
-        end
-
-        return out, myModel, myHRP
-    end
-
-    local function nexoStrongestRaidMoveToTarget(target, hrp)
-        if not target or not hrp then return end
-
-        -- Accept both normal NPC Models and standalone raid-object BaseParts.
-        -- Strongest phase-5 objects are often not Humanoid rigs, so requiring
-        -- HumanoidRootPart here caused the player to keep moving toward Gojo.
-        local part = nil
-        if target:IsA("BasePart") then
-            part = target
-        elseif target:IsA("Model") then
-            local hum = target:FindFirstChildOfClass("Humanoid")
-            part = target:FindFirstChild("HumanoidRootPart")
-                or (hum and hum.RootPart)
-                or target.PrimaryPart
-                or target:FindFirstChildWhichIsA("BasePart", true)
-        else
-            part = target:FindFirstChildWhichIsA("BasePart", true)
-        end
-        if not part then return end
-
-        local look = part.CFrame.LookVector
-        local goal = part.Position - (look * 5) + Vector3.new(0, 2, 0)
-        if (hrp.Position - goal).Magnitude <= 7 then return end
-        pcall(function()
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(goal, part.Position)
-        end)
-    end
-
-    function NexoStrongestRaidSet(on)
-        on = on and true or false
-        NEXO_STRONGEST_RAID_ON = on
-        if not on then
-            NEXO_STRONGEST_RAID_COMBAT_LOCK = false
-            NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
-        end
-
-        if on then
-            -- The existing raid engine already knows how to queue, move onto
-            -- the correct island, press Ready, and retry after completion.
-            if RaidCfg and RaidCfg.active then
-                if NEXO_STRONGEST_RAID_PREV_AGOJO == nil then
-                    NEXO_STRONGEST_RAID_PREV_AGOJO = RaidCfg.active.AGojo == true
-                end
-                -- Do NOT leave the original AGojo combat engine running while
-                -- Strongest Auto is active. That engine has its own 0.05s loop
-                -- which teleports to Gojo and calls attackList({boss}), so it
-                -- competes with the custom Placeholder/Core target loop.
-                -- Strongest Auto will enable AGojo only when it needs the
-                -- queue/ready/retry machinery and disable it as soon as raid
-                -- targets are detected.
-                RaidCfg.active.AGojo = false
-            end
-
-            -- Also enable the existing damage-protection helper.
-            pcall(function() NexoStrongestSet(true) end)
-
-            if NEXO_STRONGEST_RAID_LOOP == SESSION then return end
-            NEXO_STRONGEST_RAID_LOOP = SESSION
-
-            task.spawn(function()
-                while NEXOG.NexoHubSession == SESSION do
-                    if NEXO_STRONGEST_RAID_ON then
-                        pcall(function()
-                            local targets, mm, hrp = nexoStrongestRaidTargets(NEXO_STRONGEST_RAID_RANGE)
-                            NEXO_STRONGEST_TARGETS = targets
-
-                            -- The legacy AGojo engine is used only as a queue/raid
-                            -- state machine. The moment any actual raid target is
-                            -- visible, disable that engine so its boss-combat loop
-                            -- cannot teleport us back to Gojo. When there are no
-                            -- targets (queue/loading/raid finished), temporarily
-                            -- enable it so it can create/retry the raid.
-                            if #targets > 0 then
-                                -- Once the raid has produced ANY real combat target,
-                                -- permanently lock out the legacy Gojo combat engine
-                                -- for this Strongest session.  Otherwise a brief scan
-                                -- miss between Placeholder spawns can re-enable AGojo
-                                -- and its own teleport-to-Gojo loop.
-                                NEXO_STRONGEST_RAID_COMBAT_LOCK = true
-                            end
-                            if RaidCfg and RaidCfg.active then
-                                RaidCfg.active.AGojo = not NEXO_STRONGEST_RAID_COMBAT_LOCK
-                            end
-
-                            if #targets > 0 and mm and hrp then
-                                -- Movement target is resolved independently from the
-                                -- damage list.  Gojo must NEVER be used as the
-                                -- movement/lock-on target while any non-Gojo target
-                                -- is still alive/in range.
-                                -- Select ONE real combat object at a time.  Never pass
-                                -- the whole mixed list to attackList(), because that can
-                                -- let a boss/ancestor model become the first target while
-                                -- a raid core is still alive.
-                                local moveTarget = nil
-                                local movePart = nil
-
-                                local function targetPart(candidate)
-                                    if not candidate then return nil end
-                                    if candidate:IsA("BasePart") then return candidate end
-                                    if candidate:IsA("Model") then
-                                        local ch = candidate:FindFirstChildOfClass("Humanoid")
-                                        return candidate:FindFirstChild("HumanoidRootPart")
-                                            or (ch and ch.RootPart)
-                                            or candidate.PrimaryPart
-                                            or candidate:FindFirstChildWhichIsA("BasePart", true)
-                                    end
-                                    return candidate:FindFirstChildWhichIsA("BasePart", true)
-                                end
-
-                                local function isGojoName(candidate)
-                                    local n = string.lower(tostring(candidate and candidate.Name or ""))
-                                    return string.find(n, "gojo", 1, true)
-                                        or string.find(n, "satoru", 1, true)
-                                        or string.find(n, "honored", 1, true)
-                                end
-
-                                -- Keep the current core while it is alive. If it has
-                                -- vanished/been destroyed, immediately advance. If the
-                                -- object remains as a dead visual shell for a while,
-                                -- rotate to the next distinct core instead of getting stuck.
-                                local current = NEXO_STRONGEST_RAID_CURRENT_TARGET
-                                local nowTarget = os.clock()
-                                local function isSame(a, b)
-                                    return a ~= nil and b ~= nil and a == b
-                                end
-                                local function aliveCandidate(candidate)
-                                    if not candidate or not candidate.Parent then return false end
-                                    local h = candidate:IsA("Model") and candidate:FindFirstChildOfClass("Humanoid") or nil
-                                    if h and h.Health <= 0 then return false end
-                                    for _, key in ipairs({"Health", "HP", "HitPoints", "CurrentHealth"}) do
-                                        local av = candidate:GetAttribute(key)
-                                        if type(av) == "number" and av <= 0 then return false end
-                                        local obj = candidate:FindFirstChild(key, true)
-                                        if obj and (obj:IsA("NumberValue") or obj:IsA("IntValue")) and obj.Value <= 0 then return false end
-                                    end
-                                    return true
-                                end
-
-                                -- Phase 1-4: targets is Gojo-only, so don't use the stale
-                                -- core selection state from a previous phase.
-                                if not NEXO_STRONGEST_PHASE5 then
-                                    moveTarget = targets[1]
-                                    movePart = targetPart(moveTarget)
-                                    NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
-                                    NEXO_STRONGEST_RAID_LAST_TARGET = moveTarget
-                                    NEXO_STRONGEST_RAID_TARGET_SINCE = nowTarget
-                                else
-                                    -- First try to retain the current live core.
-                                    if aliveCandidate(current) then
-                                        local cp = targetPart(current)
-                                        if cp then
-                                            moveTarget = current
-                                            movePart = cp
-                                        end
-                                    end
-
-                                    -- If no current target, select the first core.
-                                    if not moveTarget then
-                                        for _, candidate in ipairs(targets) do
-                                            if not isGojoName(candidate) then
-                                                local cp = targetPart(candidate)
-                                                if cp then moveTarget, movePart = candidate, cp; break end
-                                            end
-                                        end
-                                    end
-
-                                    -- If the selected core is stale for too long while other
-                                    -- distinct cores exist, rotate to the next core. This is
-                                    -- specifically to handle Phase-5 visual shells that remain
-                                    -- in Workspace after their real hitbox is gone.
-                                    if moveTarget and nowTarget - (NEXO_STRONGEST_RAID_TARGET_SINCE or nowTarget) > 1.25 then
-                                        local alternate
-                                        for _, candidate in ipairs(targets) do
-                                            if not isGojoName(candidate) and not isSame(candidate, moveTarget) then
-                                                local cp = targetPart(candidate)
-                                                if cp then alternate = candidate; break end
-                                            end
-                                        end
-                                        if alternate then
-                                            moveTarget = alternate
-                                            movePart = targetPart(alternate)
-                                            NEXO_STRONGEST_RAID_CURRENT_TARGET = alternate
-                                            NEXO_STRONGEST_RAID_TARGET_SINCE = nowTarget
-                                        end
-                                    end
-
-                                    if moveTarget ~= NEXO_STRONGEST_RAID_CURRENT_TARGET then
-                                        NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
-                                        NEXO_STRONGEST_RAID_TARGET_SINCE = nowTarget
-                                    end
-                                end
-
-                                NEXO_STRONGEST_RAID_CURRENT_TARGET = moveTarget
-
-                                if movePart and os.clock() - NEXO_STRONGEST_RAID_LAST_MOVE > 0.06 then
-                                    NEXO_STRONGEST_RAID_LAST_MOVE = os.clock()
-                                    local goal = movePart.Position - (movePart.CFrame.LookVector * 5) + Vector3.new(0, 2, 0)
-                                    if (hrp.Position - goal).Magnitude > 5 then
-                                        pcall(function()
-                                            hrp.AssemblyLinearVelocity = Vector3.zero
-                                            hrp.CFrame = CFrame.new(goal, movePart.Position)
-                                        end)
-                                    end
-                                end
-
-                                if moveTarget and os.clock() - NEXO_STRONGEST_RAID_LAST_ATTACK > math.max(0.02, LOOP_GAP * 0.4) then
-                                    NEXO_STRONGEST_RAID_LAST_ATTACK = os.clock()
-                                    -- Attack ONLY the currently selected core/object.
-                                    -- This makes the loop: core #1 -> core #2 -> ... -> Gojo.
-                                    local oneTarget = { moveTarget }
-                                    NexoQ(pcall, attackList, oneTarget, mm, hrp)
-                                    if blackFlashList then
-                                        enableBlackFlash()
-                                        NexoQ(pcall, blackFlashList, oneTarget, mm, hrp)
-                                    end
-                                end
-                            end
-                        end)
-                    end
-                    task.wait(0.05)
-                end
-                if NEXO_STRONGEST_RAID_LOOP == SESSION then
-                    NEXO_STRONGEST_RAID_LOOP = nil
-                end
-            end)
-        else
-            NEXO_STRONGEST_TARGETS = {}
-            NEXO_STRONGEST_RAID_CURRENT_TARGET = nil
-            NEXO_STRONGEST_RAID_COMBAT_LOCK = false
-            pcall(function() NexoStrongestSet(false) end)
-            if RaidCfg and RaidCfg.active then
-                if NEXO_STRONGEST_RAID_PREV_AGOJO ~= nil then
-                    RaidCfg.active.AGojo = NEXO_STRONGEST_RAID_PREV_AGOJO
-                else
-                    RaidCfg.active.AGojo = false
-                end
-            end
-            NEXO_STRONGEST_RAID_PREV_AGOJO = nil
-        end
-    end
-
-    CombatTab:CreateSlider({ Name = "Strongest Raid Range", Range = { 100, 20000 }, Increment = 50,
-        CurrentValue = NEXO_STRONGEST_RAID_RANGE, Callback = function(v)
-            NEXO_STRONGEST_RAID_RANGE = tonumber(v) or 9999
-        end })
-    PT(CombatTab, "NexoStrongestRaidOn", "Auto Strongest of Today", function(on) NexoStrongestRaidSet(on) end)
+    PT(CombatTab, "NexoStrongestOn", "The strongest (Taking No dmage By Npc)", function(on) NexoStrongestSet(on) end)
 
     CombatTab:CreateSection("Passive Ability")
     PT(CombatTab, "FastInfAuraOn", "Auto Use INF Aura", function(on) NEXO_LV.FastInfAuraOn = on end)
@@ -15174,7 +14509,7 @@ end }
     SettingsTab:CreateSection("Combat Settings")
     NexoDelaySlider(SettingsTab, { Name = "Skill Speed sec", Range = { 0.01, 1 }, Increment = 0.01, CurrentValue = SKILL_GAP, Callback = function(v) SKILL_GAP = v end })
     NexoDelaySlider(SettingsTab, { Name = "Skill Budget per sec", Range = { 20, 200 }, Increment = 1, CurrentValue = SKILL_BUDGET, Callback = function(v) SKILL_BUDGET = v end })
-    SettingsTab:CreateSlider({ Name = "Kill Near Aura Range", Range = { 50, 20000 }, Increment = 1,
+    SettingsTab:CreateSlider({ Name = "Aura Range", Range = { 50, 20000 }, Increment = 1,
         CurrentValue = NEXO_LV.AURA_RANGE, Callback = function(v) NEXO_LV.AURA_RANGE = v end })
 
     SettingsTab:CreateSection("Position Settings")
@@ -15393,8 +14728,8 @@ end }
     function NexoSafeAct(plr, why, hop)
         if NexoSafeBusy then return end
         NexoSafeBusy = true
-        local msg = "[HyuN Script] Safety -- " .. why .. ": " .. plr.Name .. " (" .. tostring(plr.UserId) .. ")"
-        pcall(function() Library:Notify({ Title = "HyuN Script", Content = msg, Type = "Warning", Duration = 5 }) end)
+        local msg = "[NEXO HUB] Safety -- " .. why .. ": " .. plr.Name .. " (" .. tostring(plr.UserId) .. ")"
+        pcall(function() Library:Notify({ Title = "NEXO HUB", Content = msg, Type = "Warning", Duration = 5 }) end)
         pcall(function() NexoSafeLabel:Set(msg) end)
         NexoSafeLastTxt = msg
         warn(msg)
@@ -15495,7 +14830,7 @@ end }
     function NexoSafeAdd(txt)
         txt = (tostring(txt or ""):gsub("^%s*(.-)%s*$", "%1"))
         if txt == "" then
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Type a Username or User ID first", Type = "Info", Duration = 3 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Type a Username or User ID first", Type = "Info", Duration = 3 }) end)
             return
         end
         local Players = NEXO_LV.Players
@@ -15512,7 +14847,7 @@ end }
         for _, e in ipairs(NexoSafeList) do
             if (entry.id and e.id == entry.id)
                 or (e.name and entry.name and tostring(e.name):lower() == tostring(entry.name):lower()) then
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = entry.name .. " is already on the list", Type = "Info", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = entry.name .. " is already on the list", Type = "Info", Duration = 3 }) end)
                 return
             end
         end
@@ -15521,7 +14856,7 @@ end }
         NexoSafeInputTxt = ""
         pcall(function() if NexoSafeInputBox then NexoSafeInputBox:Set("") end end)
         NexoSafeRefresh(true)
-        pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Watching " .. tostring(entry.name), Type = "Success", Duration = 3 }) end)
+        pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Watching " .. tostring(entry.name), Type = "Success", Duration = 3 }) end)
         NexoSafeScanNow()
     end
 
@@ -15569,12 +14904,12 @@ end }
     SettingsTab:CreateButton({ Name = "Check Server Now", Callback = function()
         NexoSafeBusy = false
         if not NexoSafeOn() then
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Turn a Safety switch on first", Type = "Info", Duration = 3 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Turn a Safety switch on first", Type = "Info", Duration = 3 }) end)
             return
         end
         NexoSafeRefresh(true)
         if not NexoSafeScanNow() then
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Safety: nobody in this server matched", Type = "Info", Duration = 3 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Safety: nobody in this server matched", Type = "Info", Duration = 3 }) end)
         end
     end })
     SettingsTab:CreateButton({ Name = "Remove Last", Callback = function()
@@ -15631,8 +14966,8 @@ end }
             pcall(function() LP.DisplayName = REAL_DISPLAY end)
         end
 
-        local PROTECT_TEXT = tostring(S("NXAV_Text", "Protected by HyuN") or "")
-        if PROTECT_TEXT == "" then PROTECT_TEXT = "Protected by HyuN" end
+        local PROTECT_TEXT = tostring(S("NXAV_Text", "Protected by Nexo") or "")
+        if PROTECT_TEXT == "" then PROTECT_TEXT = "Protected by Nexo" end
 
         local BODY_PARTS = {
             "UpperTorso", "LowerTorso",
@@ -16351,11 +15686,11 @@ end }
         SettingsTab:CreateInput({
             Name = "Other Players Name Text",
             CurrentValue = PROTECT_TEXT,
-            PlaceholderText = "Protected by HyuN",
+            PlaceholderText = "Protected by Nexo",
             RemoveTextAfterFocusLost = false,
             Callback = function(text)
                 local t = (tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", ""))
-                if t == "" then t = "Protected by HyuN" end
+                if t == "" then t = "Protected by Nexo" end
                 PROTECT_TEXT = t
                 Settings["NXAV_Text"] = t
                 saveSettings()
@@ -17050,11 +16385,6 @@ end }
         end
     end)
 
-    RaidTab:CreateSection("Strongest of Today")
-    PT(RaidTab, "NexoStrongestRaidOn_Raid", "Auto Strongest of Today", function(on) NexoStrongestRaidSet(on) end)
-    RaidTab:CreateLabel("Targets: all NPCs + Gojo + gravity cores in range")
-    RaidTab:CreateLabel("Note: Infinity Shield still requires its in-game counter")
-
     RaidTab:CreateSection("Outer World Raid")
 
     PT(RaidTab, "AutoOuterRaidOn", "Auto Awk Star Rage", function(on) AutoOuterRaidOn = on end)
@@ -17253,7 +16583,7 @@ end }
             return "Grade " .. tostring(r)
         end
         local function nxSay(msg, kind)
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = tostring(msg), Type = kind or "Info", Duration = 4 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = tostring(msg), Type = kind or "Info", Duration = 4 }) end)
         end
         local function nxEvent(a, b)
             local ok, e = pcall(function() return NXRun[a] end)
@@ -18590,9 +17920,9 @@ end }
         end)
         pcall(function()
             if ok then
-                Library:Notify({ Title = "HyuN Script", Content = "Copied: " .. txt, Type = "Success", Duration = 3 })
+                Library:Notify({ Title = "NEXO HUB", Content = "Copied: " .. txt, Type = "Success", Duration = 3 })
             else
-                Library:Notify({ Title = "HyuN Script", Content = "Clipboard not supported by your executor", Type = "Error", Duration = 3 })
+                Library:Notify({ Title = "NEXO HUB", Content = "Clipboard not supported by your executor", Type = "Error", Duration = 3 })
             end
         end)
     end
@@ -18600,7 +17930,7 @@ end }
     StatusTab:CreateButton({ Name = "Copy Position", Callback = function()
         local x, y, z = NexoMyPos()
         if not x then
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
             return
         end
         NexoCopy(x .. ", " .. y .. ", " .. z)
@@ -18609,7 +17939,7 @@ end }
     StatusTab:CreateButton({ Name = "Copy Vector3.new", Callback = function()
         local x, y, z = NexoMyPos()
         if not x then
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
             return
         end
         NexoCopy("Vector3.new(" .. x .. ", " .. y .. ", " .. z .. ")")
@@ -18646,16 +17976,16 @@ end }
     StatusTab:CreateButton({ Name = "Tp to Position", Callback = function()
         local x, y, z = NexoParsePos(NexoTpBoxText)
         if not x then
-            pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Type a position like 1347.7, 677.09, 410.25", Type = "Error", Duration = 3 }) end)
+            pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Type a position like 1347.7, 677.09, 410.25", Type = "Error", Duration = 3 }) end)
             return
         end
         task.spawn(function()
             local ok = false
             pcall(function() ok = nexoTpTo(Vector3.new(x, y, z)) end)
             if ok then
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Teleported to " .. x .. ", " .. y .. ", " .. z, Type = "Success", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Teleported to " .. x .. ", " .. y .. ", " .. z, Type = "Success", Duration = 3 }) end)
             else
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
             end
         end)
     end })
@@ -18719,7 +18049,7 @@ end }
         task.spawn(function()
             local name = tostring(NexoTpPartText or ""):match("^%s*(.-)%s*$") or ""
             if name == "" then
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Type a part or model name first", Type = "Error", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Type a part or model name first", Type = "Error", Duration = 3 }) end)
                 return
             end
 
@@ -18736,7 +18066,7 @@ end }
             end
             local total = #NexoTpPartList
             if total == 0 then
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = "No part or model named \"" .. name .. "\" found", Type = "Error", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "No part or model named \"" .. name .. "\" found", Type = "Error", Duration = 3 }) end)
                 return
             end
 
@@ -18745,19 +18075,19 @@ end }
             local pos = NexoPosOfObject(obj)
             if not pos then
                 NexoTpPartList = {}
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = "That one despawned, press Tp again", Type = "Error", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "That one despawned, press Tp again", Type = "Error", Duration = 3 }) end)
                 return
             end
             local ok = false
             pcall(function() ok = nexoTpTo(pos + Vector3.new(0, 3, 0)) end)
             if ok then
                 pcall(function() Library:Notify({
-                    Title = "HyuN Script",
+                    Title = "NEXO HUB",
                     Content = obj.Name .. "  (" .. NexoTpPartIdx .. "/" .. total .. ")",
                     Type = "Success", Duration = 3,
                 }) end)
             else
-                pcall(function() Library:Notify({ Title = "HyuN Script", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
+                pcall(function() Library:Notify({ Title = "NEXO HUB", Content = "Character not loaded", Type = "Error", Duration = 3 }) end)
             end
         end)
     end })
@@ -18786,7 +18116,6 @@ end }
             local parts = {}
             if FastOn then table.insert(parts, "Attack") end
             if NEXO_LV.KillOn then table.insert(parts, "Aura") end
-            if NEXO_STRONGEST_RAID_ON then table.insert(parts, "Strongest") end
             if NEXO_LV.BringOn then table.insert(parts, "Bring") end
             if NEXO_LV.BringAllOn then table.insert(parts, "BringAll") end
             if NEXO_LV.ReachOn then table.insert(parts, "Reach") end
@@ -18862,7 +18191,7 @@ end }
     end)
 
     pcall(function()
-        Library:Notify({ Title = "HyuN Script", Content = "Loaded successfully!", Type = "Success", Duration = 4 })
+        Library:Notify({ Title = "NEXO HUB", Content = "Loaded successfully!", Type = "Success", Duration = 4 })
     end)
 end
 
@@ -18916,7 +18245,7 @@ function NexoCapStaleFix(id)
         if not NexoStaleWarn[id] then
             NexoStaleWarn[id] = true
             pcall(function()
-                Library:Notify({ Title = "HyuN Script", Type = "Error", Duration = 9,
+                Library:Notify({ Title = "NEXO HUB", Type = "Error", Duration = 9,
                     Content = id .. " was started on a different server, so its quest area does not "
                         .. "exist here and the " .. tostring(pts) .. " points cannot go up. Rejoin that "
                         .. "server, or cancel the quest to restart it here." })
@@ -18939,7 +18268,7 @@ function NexoCapStaleFix(id)
     pcall(function() s2 = m.QC:GetSavedQuest(id) end)
     local fixed = s2 and NexoCapAreaExists(s2.CaptureID)
     pcall(function()
-        Library:Notify({ Title = "HyuN Script", Type = fixed and "Success" or "Info", Duration = 6,
+        Library:Notify({ Title = "NEXO HUB", Type = fixed and "Success" or "Info", Duration = 6,
             Content = fixed
                 and (id .. ": quest area was from another server, so it was re-issued here. Farming now.")
                 or (id .. ": quest area missing on this server, retrying...") })
@@ -19217,5 +18546,5 @@ function NexoOptStats()
     }
 end
 NEXOG.NexoOptStats = NexoOptStats
-print("[HyuN] optimizer build OPT-1 active (pool=" .. tostring(NEXO_OPT.MAX_WORKERS) .. " inflight=" .. tostring(NEXO_OPT.MAX_INFLIGHT) .. ")")
--- ===== [/NEXO-OPT] ====
+print("[NEXO] optimizer build OPT-1 active (pool=" .. tostring(NEXO_OPT.MAX_WORKERS) .. " inflight=" .. tostring(NEXO_OPT.MAX_INFLIGHT) .. ")")
+-- ===== [/NEXO-OPT] =====
