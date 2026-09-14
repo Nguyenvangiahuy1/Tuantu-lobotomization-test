@@ -361,7 +361,7 @@ function NexoReqTotals(tot, order, have)
 end
 
  NEXO_LV.ATTACK_RANGE = 150
- NEXO_LV.AURA_RANGE   = 500
+ NEXO_LV.AURA_RANGE   = 9999
  NEXO_LV.BRING_RANGE  = 500
 local BRING_OFFSET = 4
 BRING_GAP          = 0.05
@@ -2267,43 +2267,105 @@ end)
 
  NEXO_LV.killBFtick = 0
 NEXO_LV.killAuraTargets = NEXO_LV.killAuraTargets or {}
+
+-- Kill Near Aura target resolver: non-Gojo targets always have priority.
+-- Gojo is excluded completely while ANY other attackable NPC/core/object exists.
+local function nexoKillAuraPriorityTargets(range)
+    local myModel = getModel()
+    local myHRP = myModel and myModel:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return {}, myModel, myHRP end
+    range = tonumber(range) or 9999
+    local myPos = myHRP.Position
+    local out, seen = {}, {}
+
+    local function partOf(x)
+        if not x then return nil end
+        if x:IsA("BasePart") then return x end
+        if x:IsA("Model") then
+            return x:FindFirstChild("HumanoidRootPart") or x.PrimaryPart or x:FindFirstChildWhichIsA("BasePart", true)
+        end
+        return x:FindFirstChildWhichIsA("BasePart", true)
+    end
+    local function nameOf(x) return string.lower(tostring(x and x.Name or "")) end
+    local function isGojo(x)
+        local n=nameOf(x)
+        return string.find(n,"gojo",1,true) or string.find(n,"satoru",1,true) or string.find(n,"honored",1,true)
+    end
+    local function isSpecial(x)
+        local n=nameOf(x)
+        return string.find(n,"placeholder",1,true) or string.find(n,"gravity",1,true)
+            or string.find(n,"core",1,true) or string.find(n,"orb",1,true)
+            or string.find(n,"hollowpurple",1,true) or string.find(n,"hollow_purple",1,true)
+    end
+    local function add(x)
+        if not x or seen[x] or x==myModel or isPunchingBag(x) or nexoIsPetModel(x) then return end
+        local part=partOf(x)
+        if not part or (part.Position-myPos).Magnitude>range or not onMyIsland(part.Position) then return end
+        if x:IsA("Model") then
+            local hum=x:FindFirstChildOfClass("Humanoid")
+            if hum then if hum.Health<=0 then return end
+            elseif not isSpecial(x) then
+                local hp=x:FindFirstChild("Health",true)
+                if not (hp and (hp:IsA("NumberValue") or hp:IsA("IntValue")) and hp.Value>0) then return end
+            end
+        elseif not isSpecial(x) then return end
+        seen[x]=true
+        out[#out+1]=x
+    end
+
+    if NPCsF then for _,m in ipairs(NPCsF:GetChildren()) do add(m) end end
+    -- PLACEHOLDER/core objects may live outside NPCsF and may have no Humanoid.
+    pcall(function()
+        for _,inst in ipairs(workspace:GetDescendants()) do
+            if isSpecial(inst) then
+                local target=inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model") or inst
+                add(target)
+            end
+        end
+    end)
+
+    local nonGojo, gojo = {}, {}
+    for _,m in ipairs(out) do if isGojo(m) then gojo[#gojo+1]=m else nonGojo[#nonGojo+1]=m end end
+    local active=(#nonGojo>0) and nonGojo or gojo
+    table.sort(active,function(a,b)
+        local pa,pb=partOf(a),partOf(b)
+        local da=pa and (pa.Position-myPos).Magnitude or math.huge
+        local db=pb and (pb.Position-myPos).Magnitude or math.huge
+        return da<db
+    end)
+    return active,myModel,myHRP
+end
+
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
-
         if NEXO_LV.KillOn and not (anyBringActive and anyBringActive()) then
-            -- Kill Near Aura now attacks EVERY valid target inside AURA_RANGE.
-            -- The nearest target is still used only for positioning/sticking.
-            local targets, mm, hrp = NEXO_LV.collectTargets(NEXO_LV.AURA_RANGE)
-            NEXO_LV.killAuraTargets = targets or {}
-
-            local nearest, nearestDist
-            if hrp and type(targets) == "table" then
-                for _, m in ipairs(targets) do
-                    local h = m and m:FindFirstChild("HumanoidRootPart")
+            local targets,mm,hrp=nexoKillAuraPriorityTargets(NEXO_LV.AURA_RANGE)
+            NEXO_LV.killAuraTargets=targets or {}
+            local nearest,nearestDist
+            if hrp then
+                for _,m in ipairs(targets) do
+                    local h=m and (m:FindFirstChild("HumanoidRootPart") or (m:IsA("Model") and m.PrimaryPart))
                     if h then
-                        local d = (h.Position - hrp.Position).Magnitude
-                        if not nearestDist or d < nearestDist then
-                            nearest, nearestDist = m, d
-                        end
+                        local d=(h.Position-hrp.Position).Magnitude
+                        if not nearestDist or d<nearestDist then nearest,nearestDist=m,d end
                     end
                 end
             end
-
-            NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nearest, hrp
-            if hrp and type(targets) == "table" and #targets > 0 then
-                NEXO_LV.killBFtick = NEXO_LV.killBFtick + 1
-                if NEXO_LV.killBFtick % 2 == 0 then
+            NEXO_LV.killAuraTarget,NEXO_LV.killAuraHRP=nearest,hrp
+            if hrp and #targets>0 then
+                NEXO_LV.killBFtick=NEXO_LV.killBFtick+1
+                if NEXO_LV.killBFtick%2==0 then
                     enableBlackFlash()
-                    NexoQ(pcall, blackFlashList, targets, mm, hrp)
+                    NexoQ(pcall,blackFlashList,targets,mm,hrp)
                 else
-                    NexoQ(pcall, attackList, targets, mm, hrp)
+                    NexoQ(pcall,attackList,targets,mm,hrp)
                 end
             end
         else
-            NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nil, nil
-            NEXO_LV.killAuraTargets = {}
+            NEXO_LV.killAuraTarget,NEXO_LV.killAuraHRP=nil,nil
+            NEXO_LV.killAuraTargets={}
         end
-        task.wait(math.max(0.02, LOOP_GAP * 0.6))
+        task.wait(math.max(0.02,LOOP_GAP*0.6))
     end
 end)
 
