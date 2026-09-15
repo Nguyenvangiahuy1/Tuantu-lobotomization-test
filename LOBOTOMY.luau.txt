@@ -24,15 +24,28 @@ local units = workspace.Units
 
 ---------------------------------------------------------- FUNCS
 local function work(tablet, workType)
-    if not tablet or not workType or (workType ~= "Attachment" and workType ~= "Insight" and workType ~= "Instinct" and workType ~= "Repression") then notif("What are you working with?", "Work Error") return end
+    if not tablet or not workType or (workType ~= "Attachment" and workType ~= "Insight" and workType ~= "Instinct" and workType ~= "Repression") then 
+        notif("What are you working with?", "Work Error")
+        return
+    end
     if not tablet:IsA("BasePart") or tablet.Name ~= "WorkTablet" then return end
-    if tablet.Parent.IsWorking.Value == true then notif("Someone is working at that abnormality.", "Work Error") return end
+    if tablet.Parent.IsWorking.Value == true then 
+        notif("Someone is working at that abnormality.", "Work Error") 
+        return
+    end
 
     remotes.WorkEvent:FireServer(tablet, workType)
 end
+
 local function extract(abnormality, item)
-    if not abnormality then notif("What abnormality are you extracting from?", "Extraction Error") return end
-    if not item or item ~= "Suit" and item ~= "Weapon" then notif("What are you extracting?", "Extraction Error") return end
+    if not abnormality then 
+        notif("What abnormality are you extracting from?", "Extraction Error") 
+        return 
+    end
+    if not item or (item ~= "Suit" and item ~= "Weapon") then 
+        notif("What are you extracting?", "Extraction Error") 
+        return 
+    end
 
     remotes.ExtractEquipment:FireServer(abnormality, item)
     
@@ -54,12 +67,15 @@ local function extract(abnormality, item)
         notif("Extracted "..itemName.Text, "Extraction Request Success")
     end
 end
+
 local function getRoot(char)
     return char:FindFirstChild("HumanoidRootPart")
 end
+
 local function getHuman(char)
     return char:FindFirstChildOfClass("Humanoid")
 end
+
 function safeFind(root, path)
     local current = root
     for _, name in ipairs(path) do
@@ -68,16 +84,85 @@ function safeFind(root, path)
     end
     return current
 end
+
+-- NEW HACK FUNCTIONS
+local function godMode(enabled)
+    if not player.Character then return end
+    local humanoid = getHuman(player.Character)
+    if humanoid then
+        if enabled then
+            humanoid.MaxHealth = math.huge
+            humanoid.Health = math.huge
+        else
+            humanoid.MaxHealth = 100
+            humanoid.Health = 100
+        end
+    end
+end
+
+local function infiniteStamina(enabled)
+    local char = player.Character
+    if not char then return end
+    local stamina = safeFind(char, {"Stats", "Stamina"})
+    if stamina then
+        if enabled then
+            stamina.Value = math.huge
+        else
+            stamina.Value = 100
+        end
+    end
+end
+
+local function speedMultiplier(multiplier)
+    local humanoid = getHuman(player.Character)
+    if humanoid then
+        humanoid.WalkSpeed = 16 * multiplier
+    end
+end
+
+local function autoWork()
+    for _, abnormality in pairs(abnormalities:GetChildren()) do
+        if abnormality:IsA("Model") then
+            local workTablet = abnormality:FindFirstChild("WorkTablet")
+            if workTablet then
+                work(workTablet, selectedType)
+                task.wait(0.5)
+            end
+        end
+    end
+end
+
+local function autoExtract(itemType)
+    for _, abnormality in pairs(abnormalities:GetChildren()) do
+        if abnormality:IsA("Model") then
+            extract(abnormality, itemType)
+            task.wait(0.3)
+        end
+    end
+end
+
+local function teleportToMouse()
+    local mouse = player:GetMouse()
+    local root = getRoot(player.Character)
+    if root and mouse.Hit then
+        root.CFrame = mouse.Hit + Vector3.new(0, 3, 0)
+    end
+end
+
 ---------------------------------------------------------- VARS
 local enemyEsp = false
---local autoParry = false
+local godModeEnabled = false
+local infiniteStaminaEnabled = false
+local autoWorkEnabled = false
+local autoExtractEnabled = false
+local currentSpeedMultiplier = 1
 
 ------------------------------------------------------------------------------ RAYFIELD SECTION
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local Window = Rayfield:CreateWindow({
    Name = "Lobotomizer",
    LoadingTitle = "LOBOTOMIZER LOADING...",
-   LoadingSubtitle = "by Ali",
+   LoadingSubtitle = "by Ali [UPDATED]",
    ShowText = "L",
    Theme = "Default",
 
@@ -86,6 +171,7 @@ local Window = Rayfield:CreateWindow({
    DisableRayfieldPrompts = true,
    DisableBuildWarnings = true,
 })
+
 function notif(txt, tit, dur)
     Rayfield:Notify({
         Content = txt,
@@ -95,9 +181,9 @@ function notif(txt, tit, dur)
 end
 
 local abTab = Window:CreateTab("Abnormalities")
--- local statsTab = Window:CreateTab("Stats")
 local visualTab = Window:CreateTab("Visual")
 local charTab = Window:CreateTab("Character")
+local hackTab = Window:CreateTab("Hacks")
 local settingsTab = Window:CreateTab("Settings")
 
 local destroying = false
@@ -130,6 +216,7 @@ local abdd = abTab:CreateDropdown({
         end
     end
 })
+
 abTab:CreateDropdown({
     Name = "Work Type",
     Options = {
@@ -145,6 +232,7 @@ abTab:CreateDropdown({
         waa:Set("Work at Selected Abnormalities with "..selectedType)
     end
 })
+
 abTab:CreateButton({
     Name = "Find Abnormalities",
     Callback = function()
@@ -159,14 +247,17 @@ abTab:CreateButton({
         end
 
         abdd:Refresh(a)
+        notif("Found "..#a.." abnormalities", "Search Complete")
     end
 })
 
 abTab:CreateSection("Actions")
+
 waa = abTab:CreateButton({
     Name = "Work at Selected Abnormalities with Selected Type",
     Callback = function()
-        if selectedType == nil then
+        if selectedType == nil or selectedType == "Selected Type" then
+            notif("Please select a work type first", "Error")
             return
         end
 
@@ -176,6 +267,7 @@ waa = abTab:CreateButton({
         end
     end
 })
+
 abTab:CreateButton({
     Name = "Extract Weapon from Selected Abnormalities",
     Callback = function()
@@ -184,6 +276,7 @@ abTab:CreateButton({
         end
     end
 })
+
 abTab:CreateButton({
     Name = "Extract Suit from Selected Abnormalities",
     Callback = function()
@@ -197,14 +290,17 @@ tpta = abTab:CreateButton({
     Name = "Teleport to the First Selected Abnormality (nil)",
     Callback = function()
         local abnormality = selectedAbnormalities[1]
-
         local root = getRoot(player.Character)
 
         if root and abnormality then
             root.CFrame = abnormality.LeavePosition.CFrame
+            notif("Teleported to "..abnormality.Name, "Success")
+        else
+            notif("No abnormality selected", "Error")
         end
     end
 })
+
 peekallinfo = abTab:CreateButton({
     Name = "Peek Selected Abnormality's Locked Info [OFF]",
     Callback = function()
@@ -226,7 +322,7 @@ local function setGui(gui, props)
         modified[gui] = {}
     end
 
-    for property, value in props do
+    for property, value in pairs(props) do
         if modified[gui][property] == nil then
             modified[gui][property] = gui[property]
         end
@@ -234,10 +330,11 @@ local function setGui(gui, props)
         gui[property] = value
     end
 end
+
 restoreGuis = function()
-    for gui, properties in modified do
+    for gui, properties in pairs(modified) do
         if gui and gui.Parent then
-            for property, original in properties do
+            for property, original in pairs(properties) do
                 gui[property] = original
             end
         end
@@ -352,26 +449,7 @@ RunService:BindToRenderStep("PEEK", Enum.RenderPriority.Last.Value + 1, function
         peekAbnormality(abnormality)
     end
 end)
------------------------------------------------------------------------------ STATS SECTION
--- statsTab:CreateSection("Character Stats")
--- local currentStatSpeed = safeFind(player.Character, {"CharStats","AttackSpeed"})
--- local editedSpeed = 1
--- statsTab:CreateSlider({
---     Name = "Attack Speed",
---     Range = {1, 100},
---     Increment = 1,
---     CurrentValue = currentStatSpeed and currentStatSpeed.Value or 1,
---     Callback = function(v)
---         editedSpeed = v
---     end
--- })
 
--- RunService:BindToRenderStep("STAT", Enum.RenderPriority.Character.Value + 1, function(...)
---     currentStatSpeed = safeFind(player.Character, {"CharStats","AttackSpeed"})
---     if currentStatSpeed and currentStatSpeed.Value ~= editedSpeed then
---         currentStatSpeed.Value = editedSpeed
---     end
--- end)
 --------------------------------------------------------------------------- ESP SECTION
 visualTab:CreateSection("Abnormalities")
 local espObj = {}
@@ -381,10 +459,13 @@ local eet = visualTab:CreateToggle({
     Callback = function(v)
         enemyEsp = v
 
-        if #espObj > 1 then
+        if #espObj > 0 then
             for _, o in espObj do
-                o:Destroy()
+                if o and o.Parent then
+                    o:Destroy()
+                end
             end
+            espObj = {}
         end
     end
 })
@@ -396,23 +477,31 @@ RunService:BindToRenderStep("ESP", Enum.RenderPriority.Camera.Value + 2, functio
         if tick() - lastRefresh >= refreshRate then
             lastRefresh = tick()
             
-            if #espObj > 1 then
+            if #espObj > 0 then
                 for _, o in espObj do
-                    o:Destroy()
+                    if o and o.Parent then
+                        o:Destroy()
+                    end
                 end
             end
+            espObj = {}
         end
 
         for _, unit in units:GetChildren() do
-            if unit.Name == "Clerk" or Players:GetPlayerFromCharacter(unit) or not unit:IsA("Model") or unit:FindFirstChild("BillboardGui") or not unit:FindFirstChild("RiskLevel") then continue end
+            if unit.Name == "Clerk" or Players:GetPlayerFromCharacter(unit) or not unit:IsA("Model") or unit:FindFirstChild("BillboardGui") or not unit:FindFirstChild("RiskLevel") then 
+                continue
+            end
+            
             local unitRoot = getRoot(unit)
             local unitHuman = getHuman(unit)
+
+            if not unitRoot or not unitHuman then continue end
 
             local hl = Instance.new("Highlight")
             hl.Adornee = unit
             hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             hl.FillColor = Color3.fromRGB(255, 0, 0)
-            hl.FillTransparency = 0.67 + 0.067 -- 😊😊😊
+            hl.FillTransparency = 0.5
             hl.OutlineTransparency = 0
             hl.Parent = CoreGui
             table.insert(espObj, hl)
@@ -421,6 +510,7 @@ RunService:BindToRenderStep("ESP", Enum.RenderPriority.Camera.Value + 2, functio
             billboard.Adornee = unit.HumanoidRootPart
             billboard.AlwaysOnTop = true
             billboard.Size = UDim2.fromOffset(150, 40)
+            
             local nameText = Instance.new("TextLabel")
             nameText.Name = "EnemyName"
             nameText.Text = unit.Name
@@ -430,6 +520,7 @@ RunService:BindToRenderStep("ESP", Enum.RenderPriority.Camera.Value + 2, functio
             nameText.Size = UDim2.fromScale(1, 0.33)
             nameText.Position = UDim2.fromScale(0, 0)
             nameText.Parent = billboard
+            
             local distanceText = Instance.new("TextLabel")
             distanceText.Name = "Distance"
             distanceText.Text = "Distance: 0"
@@ -439,6 +530,7 @@ RunService:BindToRenderStep("ESP", Enum.RenderPriority.Camera.Value + 2, functio
             distanceText.Size = UDim2.fromScale(1, 0.33)
             distanceText.Position = UDim2.fromScale(0, 0.33)
             distanceText.Parent = billboard
+            
             local hpText = Instance.new("TextLabel")
             hpText.Name = "HP"
             hpText.Text = "Health: 100"
@@ -446,10 +538,10 @@ RunService:BindToRenderStep("ESP", Enum.RenderPriority.Camera.Value + 2, functio
             hpText.TextColor3 = Color3.new(1,1,1)
             hpText.BackgroundTransparency = 1
             hpText.Size = UDim2.fromScale(1, 0.33)
-            hpText.Position = UDim2.fromScale(0, 0.67) --😊😊😊
+            hpText.Position = UDim2.fromScale(0, 0.67)
             hpText.Parent = billboard
 
-            billboard.Parent = unit --better if inside unit
+            billboard.Parent = unit
             table.insert(espObj, billboard)
 
             task.spawn(function()
@@ -466,7 +558,7 @@ RunService:BindToRenderStep("ESP", Enum.RenderPriority.Camera.Value + 2, functio
                     end
 
                     if unitHuman then
-                        hpText.Text = "Health: "..unitHuman.Health
+                        hpText.Text = "Health: "..math.round(unitHuman.Health)
                     end
 
                     task.wait(.5)
@@ -480,8 +572,9 @@ end)
 charTab:CreateSection("Humanoid")
 local setWS = false
 local setJP = false
-local currentWS = getHuman(player.Character) and getHuman(player.Character).WalkSpeed
-local currentJP = getHuman(player.Character) and (getHuman(player.Character).JumpPower or getHuman(player.Character).JumpHeight)
+local currentWS = getHuman(player.Character) and getHuman(player.Character).WalkSpeed or 16
+local currentJP = getHuman(player.Character) and (getHuman(player.Character).JumpPower or getHuman(player.Character).JumpHeight) or 50
+
 charTab:CreateToggle({
     Name = "Set Walkspeed",
     CurrentValue = setWS,
@@ -489,6 +582,7 @@ charTab:CreateToggle({
         setWS = v
     end
 })
+
 charTab:CreateToggle({
     Name = "Set Jumppower",
     CurrentValue = setJP,
@@ -496,6 +590,7 @@ charTab:CreateToggle({
         setJP = v
     end
 })
+
 charTab:CreateSlider({
     Name = "Walkspeed",
     Range = {10, 200},
@@ -505,6 +600,7 @@ charTab:CreateSlider({
         currentWS = v
     end
 })
+
 charTab:CreateSlider({
     Name = "Jumppower",
     Range = {1, 100},
@@ -512,6 +608,17 @@ charTab:CreateSlider({
     CurrentValue = currentJP,
     Callback = function(v)
         currentJP = v
+    end
+})
+
+charTab:CreateDivider()
+charTab:CreateSection("Teleportation")
+
+charTab:CreateButton({
+    Name = "Teleport to Mouse",
+    Callback = function()
+        teleportToMouse()
+        notif("Teleported to mouse position", "Success")
     end
 })
 
@@ -534,17 +641,96 @@ RunService:BindToRenderStep("SETHUMANOID", Enum.RenderPriority.Character.Value +
     end
 end)
 
-charTab:CreateDivider()
-charTab:CreateSection("Auto Parry")
-local apt
-apt = charTab:CreateToggle({
-    Name = "Auto Parry (UH NOT YET SORRY...)",
-    CurrentValue = false,
+--------------------------------------------------------------------------- HACKS SECTION
+hackTab:CreateSection("Combat Hacks")
+
+hackTab:CreateToggle({
+    Name = "God Mode",
+    CurrentValue = godModeEnabled,
     Callback = function(v)
-        task.wait(.1)
-        apt:Set(false)
+        godModeEnabled = v
+        godMode(v)
+        notif("God Mode: ".. (v and "ON" or "OFF"), "Hack Status")
     end
 })
+
+hackTab:CreateToggle({
+    Name = "Infinite Stamina",
+    CurrentValue = infiniteStaminaEnabled,
+    Callback = function(v)
+        infiniteStaminaEnabled = v
+        infiniteStamina(v)
+        notif("Infinite Stamina: ".. (v and "ON" or "OFF"), "Hack Status")
+    end
+})
+
+hackTab:CreateSlider({
+    Name = "Speed Multiplier",
+    Range = {1, 10},
+    Increment = 0.5,
+    CurrentValue = 1,
+    Callback = function(v)
+        currentSpeedMultiplier = v
+        speedMultiplier(v)
+    end
+})
+
+hackTab:CreateSection("Auto Functions")
+
+hackTab:CreateToggle({
+    Name = "Auto Work",
+    CurrentValue = autoWorkEnabled,
+    Callback = function(v)
+        autoWorkEnabled = v
+        notif("Auto Work: ".. (v and "ON" or "OFF"), "Hack Status")
+    end
+})
+
+hackTab:CreateToggle({
+    Name = "Auto Extract Weapon",
+    CurrentValue = false,
+    Callback = function(v)
+        if v then
+            autoExtract("Weapon")
+            notif("Auto extracting weapons", "Extraction")
+        end
+    end
+})
+
+hackTab:CreateToggle({
+    Name = "Auto Extract Suit",
+    CurrentValue = false,
+    Callback = function(v)
+        if v then
+            autoExtract("Suit")
+            notif("Auto extracting suits", "Extraction")
+        end
+    end
+})
+
+hackTab:CreateSection("Vision")
+hackTab:CreateButton({
+    Name = "No Fog",
+    Callback = function()
+        game.Lighting.Ambient = Color3.fromRGB(200, 200, 200)
+        game.Lighting.ClockTime = 12
+        notif("Fog disabled", "Success")
+    end
+})
+
+-- Auto work loop
+RunService:BindToRenderStep("AUTOWORK", Enum.RenderPriority.Character.Value + 1, function()
+    if autoWorkEnabled and selectedType ~= "Selected Type" then
+        autoWork()
+    end
+    
+    if godModeEnabled and player.Character then
+        local humanoid = getHuman(player.Character)
+        if humanoid and humanoid.Health < humanoid.MaxHealth then
+            humanoid.Health = humanoid.MaxHealth
+        end
+    end
+end)
 
 --------------------------------------------------------------------------- SETTINGS SECTION
 function destroyGui()
@@ -555,8 +741,10 @@ function destroyGui()
     print("start destroying assets")
 
     RunService:UnbindFromRenderStep("ESP")
-    for _, o in espObj do
-        o:Destroy()
+    for _, o in ipairs(espObj or {}) do
+        if o and o.Parent then
+            o:Destroy()
+        end
     end
     espObj = nil
     print("unbinded esp and cleaned esp objects")
@@ -566,6 +754,9 @@ function destroyGui()
 
     RunService:UnbindFromRenderStep("PEEK")
     print("unbinded peek")
+
+    RunService:UnbindFromRenderStep("AUTOWORK")
+    print("unbinded autowork")
 
     restoreGuis()
     print("restored peeked guis")
@@ -584,6 +775,7 @@ function destroyGui()
     Rayfield:Destroy()
 end
 
+settingsTab:CreateSection("GUI")
 settingsTab:CreateButton({
     Name = "Destroy GUI",
     Callback = function()
@@ -591,10 +783,15 @@ settingsTab:CreateButton({
     end
 })
 
+settingsTab:CreateSection("Info")
+settingsTab:CreateLabel("Tuantu's Lobotomization Script")
+settingsTab:CreateLabel("Version: 2.0 - Updated with Hacks")
+settingsTab:CreateLabel("Created by: Ali [Updated]")
+
 ------------------------------------------------------------ THE END
 local partthatdestroystheguiwhenitisdestroyed = Instance.new("Part")
 partthatdestroystheguiwhenitisdestroyed.Name = "DESTROYLOBOTOMIZER"
 partthatdestroystheguiwhenitisdestroyed.Parent = ReplicatedStorage
 partthatdestroystheguiwhenitisdestroyed.Destroying:Once(destroyGui)
 
-notif("Lobotomizer Executed!", "Lobotomizer GUI")
+notif("Lobotomizer Executed!", "Lobotomizer GUI v2.0")
