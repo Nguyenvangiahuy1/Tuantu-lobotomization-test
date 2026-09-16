@@ -2256,24 +2256,52 @@ CONNS[#CONNS+1] = RunService.Heartbeat:Connect(function(dt)
 end)
 
  NEXO_LV.killBFtick = 0
+
+-- Kill Aura Black Flash selector.
+-- Prefer v3 when the toggle is enabled and the skill exists.
+-- Fall back to v2, then v1, then Punch so Kill Aura keeps damaging
+-- targets instead of losing its damage path when v3 is unavailable.
+local function NexoKillAuraBFSkill()
+    if NEXO_LV.BlackFlash3On and NexoBFExists("BlackFlashSkill3") then
+        return "BlackFlashSkill3"
+    end
+    if NEXO_LV.BlackFlash2On and NexoBFExists("BlackFlashSkill2") then
+        return "BlackFlashSkill2"
+    end
+    if BlackFlashOn and NexoBFExists("BlackFlashSkill1") then
+        return "BlackFlashSkill1"
+    end
+    return nil
+end
+
+local function NexoKillAuraAttack(target, myModel, myHRP)
+    local skill = NexoKillAuraBFSkill()
+    if skill then
+        enableBlackFlash(skill)
+        NexoQ(pcall, function()
+            NexoBFCast(skill, {target}, myModel, myHRP)
+        end)
+        return
+    end
+
+    -- No Black Flash skill available: retain the original normal attack path.
+    NexoQ(pcall, attackList, {target}, myModel, myHRP)
+end
+
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
-
         if NEXO_LV.KillOn and not (anyBringActive and anyBringActive()) then
             local n, mm, hrp = NEXO_LV.getNearest(NEXO_LV.AURA_RANGE)
             NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = n, hrp
+
             if n and hrp then
                 NEXO_LV.killBFtick = NEXO_LV.killBFtick + 1
-                if NEXO_LV.killBFtick % 2 == 0 then
-                    enableBlackFlash()
-                    NexoQ(pcall, blackFlashList, {n}, mm, hrp)
-                else
-                    NexoQ(pcall, attackList, {n}, mm, hrp)
-                end
+                NexoKillAuraAttack(n, mm, hrp)
             end
         else
             NEXO_LV.killAuraTarget, NEXO_LV.killAuraHRP = nil, nil
         end
+
         task.wait(math.max(0.02, LOOP_GAP * 0.6))
     end
 end)
