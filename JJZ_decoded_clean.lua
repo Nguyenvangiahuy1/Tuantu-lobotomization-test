@@ -1287,7 +1287,10 @@ local STICK_OFFSET = 4
 
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
-        if FastOn then
+        local bfOwnedByKillAura =
+            NEXO_LV.KillOn and NexoSelectedBlackFlashSkill() ~= nil
+
+        if FastOn and not bfOwnedByKillAura then
             NexoQ(NexoListJob, attackList)
         end
         task.wait(math.max(NEXO_LV.TICK, LOOP_GAP))
@@ -1448,13 +1451,34 @@ local function enableBlackFlash(skill)
     NexoSetFlag("CanBlackFlash", true)
     NexoSetFlag("BlackFlashSkill", skill or "BlackFlashSkill1")
 end
+local function NexoSelectedBlackFlashSkill()
+    -- One unified Black Flash pipeline. BF3 is preferred when enabled,
+    -- then BF2, then BF1. All versions use the same cast path.
+    if NEXO_LV.BlackFlash3On and NexoBFExists("BlackFlashSkill3") then
+        return "BlackFlashSkill3"
+    end
+    if NEXO_LV.BlackFlash2On and NexoBFExists("BlackFlashSkill2") then
+        return "BlackFlashSkill2"
+    end
+    if BlackFlashOn and NexoBFExists("BlackFlashSkill1") then
+        return "BlackFlashSkill1"
+    end
+    return nil
+end
+
 local function blackFlashList(targets, myModel, myHRP)
-    NexoBFCast("BlackFlashSkill1", nexoFilterPets(targets), myModel, myHRP)
+    local skill = NexoSelectedBlackFlashSkill()
+    if not skill then return end
+    enableBlackFlash(skill)
+    NexoBFCast(skill, nexoFilterPets(targets), myModel, myHRP)
 end
 
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
-        if BlackFlashOn or NEXO_LV.KillOn then enableBlackFlash() end
+        local skill = NexoSelectedBlackFlashSkill()
+        if skill then
+            enableBlackFlash(skill)
+        end
         task.wait(1)
     end
 end)
@@ -1469,11 +1493,13 @@ function NexoBFJob(name) NexoBusyT = os.clock() pcall(NexoRunBF, name) end
 
 task.spawn(function()
     while NEXOG.NexoHubSession == SESSION do
-
-        if BlackFlashOn and NEXO_LV.globalReady("BlackFlashSkill1") then NexoQ(NexoListJob, blackFlashList) end
-        if NEXO_LV.BlackFlash2On and NEXO_LV.globalReady("BlackFlashSkill2") then NexoQ(NexoBFJob, "BlackFlashSkill2") end
-        if NEXO_LV.BlackFlash3On and NexoBFExists("BlackFlashSkill3") and NEXO_LV.globalReady("BlackFlashSkill3") then
-            NexoQ(NexoBFJob, "BlackFlashSkill3")
+        -- All Black Flash versions share one scheduler, just like BF1.
+        -- Kill Aura owns this scheduler while it is active.
+        if not NEXO_LV.KillOn then
+            local skill = NexoSelectedBlackFlashSkill()
+            if skill and NEXO_LV.globalReady(skill) then
+                NexoQ(NexoListJob, blackFlashList)
+            end
         end
         task.wait(NexoGap())
     end
@@ -2261,22 +2287,12 @@ end)
 -- Prefer v3 when the toggle is enabled and the skill exists.
 -- Fall back to v2, then v1, then Punch so Kill Aura keeps damaging
 -- targets instead of losing its damage path when v3 is unavailable.
-local function NexoKillAuraBFSkill()
-    if NEXO_LV.BlackFlash3On and NexoBFExists("BlackFlashSkill3") then
-        return "BlackFlashSkill3"
-    end
-    if NEXO_LV.BlackFlash2On and NexoBFExists("BlackFlashSkill2") then
-        return "BlackFlashSkill2"
-    end
-    if BlackFlashOn and NexoBFExists("BlackFlashSkill1") then
-        return "BlackFlashSkill1"
-    end
-    return nil
-end
-
 local function NexoKillAuraAttack(target, myModel, myHRP)
-    local skill = NexoKillAuraBFSkill()
+    local skill = NexoSelectedBlackFlashSkill()
+
     if skill then
+        -- Kill Aura uses the exact same Black Flash cast pipeline as the
+        -- normal Black Flash toggle, with only the target list narrowed.
         enableBlackFlash(skill)
         NexoQ(pcall, function()
             NexoBFCast(skill, {target}, myModel, myHRP)
@@ -2284,7 +2300,7 @@ local function NexoKillAuraAttack(target, myModel, myHRP)
         return
     end
 
-    -- No Black Flash skill available: retain the original normal attack path.
+    -- No Black Flash selected: normal Punch remains the fallback.
     NexoQ(pcall, attackList, {target}, myModel, myHRP)
 end
 
